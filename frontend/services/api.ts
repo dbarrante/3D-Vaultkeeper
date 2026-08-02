@@ -393,6 +393,17 @@ export const api = {
     if (!res.ok) throw new Error("Failed to delete watch folder");
   },
 
+  browseFolder: async (): Promise<{ path: string | null }> => {
+    const res = await fetch(`${getApiBaseUrl()}/browse-folder`, {
+      method: "POST",
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => null);
+      throw new Error(body?.detail || "Folder browser unavailable");
+    }
+    return res.json();
+  },
+
   scanWatchFolderNow: async (id: string): Promise<{ ingested: number }> => {
     const res = await fetch(`${getApiBaseUrl()}/watch-folders/${id}/scan-now`, {
       method: "POST",
