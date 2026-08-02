@@ -35,7 +35,10 @@ def file_inbox_item(item_id: str, payload: FileInboxItem):
         raise HTTPException(status_code=404, detail="Inbox item not found")
 
     source_path = Path(row["path"])
-    model = ingest_file(str(source_path), folder_id=payload.folderId, original_filename=source_path.name, move=False)
+    model = ingest_file(
+        str(source_path), folder_id=payload.folderId, original_filename=source_path.name,
+        move=False, pickup_sidecar_notes=True,
+    )
 
     conn.execute("UPDATE inbox_items SET status='filed' WHERE id=?", (item_id,))
     conn.commit()

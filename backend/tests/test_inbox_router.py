@@ -37,6 +37,17 @@ def test_file_inbox_item_ingests_and_marks_filed(client, tmp_path):
     assert any(m["name"] == "found.stl" for m in models)
 
 
+def test_file_inbox_item_picks_up_sidecar_notes(client, tmp_path):
+    item_id, path = _seed_inbox_item(client, tmp_path)
+    (tmp_path / "found.txt").write_text("Downloaded for the office nameplate project.")
+
+    client.post(f"/api/inbox/{item_id}/file", json={"folderId": "1"})
+
+    models = client.get("/api/models", params={"folderId": "1"}).json()
+    model = next(m for m in models if m["name"] == "found.stl")
+    assert model["description"] == "Downloaded for the office nameplate project."
+
+
 def test_dismiss_inbox_item(client, tmp_path):
     item_id, path = _seed_inbox_item(client, tmp_path)
 

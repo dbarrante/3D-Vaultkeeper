@@ -84,6 +84,32 @@ def test_scan_watch_folder_skips_already_ingested_files(client, tmp_path):
     assert second_count == 0
 
 
+def test_scan_watch_folder_picks_up_sidecar_notes(client, tmp_path):
+    from app.services.scan import scan_watch_folder
+    from app.db import get_db_conn
+
+    watched_dir = tmp_path / "watched"
+    watched_dir.mkdir()
+    (watched_dir / "a.stl").write_bytes(b"solid a endsolid")
+    (watched_dir / "a.txt").write_text("Print settings: 0.2mm, 20% infill.")
+
+    conn = get_db_conn()
+    conn.execute(
+        "INSERT INTO watch_folders(id,path,folderId,frequencyMinutes,lastScanAt,enabled) VALUES (?,?,?,?,?,?)",
+        ("wf1", str(watched_dir), "1", 60, None, 1),
+    )
+    conn.commit()
+    row = dict(conn.execute("SELECT * FROM watch_folders WHERE id=?", ("wf1",)).fetchone())
+    conn.close()
+
+    scan_watch_folder(row)
+
+    conn = get_db_conn()
+    model = conn.execute("SELECT description FROM models WHERE name='a.stl'").fetchone()
+    conn.close()
+    assert model["description"] == "Print settings: 0.2mm, 20% infill."
+
+
 def test_scan_downloads_folder_creates_pending_inbox_items(client, tmp_path):
     from app.services.scan import scan_downloads_folder
     from app.db import get_db_conn

@@ -29,6 +29,11 @@ export interface STLModel {
   dimensions?: { x: number; y: number; z: number };
   thumbnail?: string;
   manual?: string | null;
+  author?: string | null;
+  sourceUrl?: string | null;
+  category?: string | null;
+  colorCount?: number | null;
+  sliceSettings?: string | null;
 }
 
 export interface STLModelCollection {

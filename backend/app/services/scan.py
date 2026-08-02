@@ -41,6 +41,7 @@ def scan_watch_folder(watch_folder_row: dict) -> int:
                 folder_id=watch_folder_row["folderId"],
                 original_filename=file_path.name,
                 record_source=True,
+                pickup_sidecar_notes=True,
             )
             ingested += 1
         except Exception:

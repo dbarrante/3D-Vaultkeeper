@@ -95,6 +95,7 @@ def drive_scan(payload: DriveScanRequest):
                 ingest_file(
                     str(file_path), folder_id=payload.folderId,
                     original_filename=file_path.name, record_source=True,
+                    pickup_sidecar_notes=True,
                 )
                 already_seen.add(str(file_path))  # don't double-ingest if two paths overlap
                 ingested += 1

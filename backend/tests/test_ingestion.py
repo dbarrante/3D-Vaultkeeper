@@ -58,3 +58,29 @@ def test_ingest_file_without_record_source_leaves_source_path_null(client, tmp_p
     row = conn.execute("SELECT sourcePath FROM models WHERE id=?", (model["id"],)).fetchone()
     conn.close()
     assert row["sourcePath"] is None
+
+
+def test_ingest_file_with_pickup_sidecar_notes_sets_description(client, tmp_path):
+    from app.services.ingestion import ingest_file
+
+    source = tmp_path / "annotated.stl"
+    source.write_bytes(b"solid annotated endsolid")
+    (tmp_path / "annotated.txt").write_text("Print with supports, 0.16mm layers.")
+
+    model = ingest_file(
+        str(source), folder_id="1", original_filename="annotated.stl", pickup_sidecar_notes=True
+    )
+
+    assert model["description"] == "Print with supports, 0.16mm layers."
+
+
+def test_ingest_file_without_pickup_sidecar_notes_ignores_sibling_txt(client, tmp_path):
+    from app.services.ingestion import ingest_file
+
+    source = tmp_path / "annotated.stl"
+    source.write_bytes(b"solid annotated endsolid")
+    (tmp_path / "annotated.txt").write_text("Print with supports, 0.16mm layers.")
+
+    model = ingest_file(str(source), folder_id="1", original_filename="annotated.stl")  # default False
+
+    assert model["description"] == ""

@@ -5,6 +5,7 @@ import shutil
 from typing import Optional, List
 
 from app.db import get_db_conn, now_ms, UPLOAD_DIR
+from app.services.sidecar_notes import find_sidecar_notes
 
 
 def ingest_file(
@@ -15,6 +16,7 @@ def ingest_file(
     thumbnail: Optional[str] = None,
     move: bool = False,
     record_source: bool = False,
+    pickup_sidecar_notes: bool = False,
 ) -> dict:
     """Put a file already on disk into the library and register it as a model.
     Shared by manual upload, the folder watcher (Phase 1), and the acquisition
@@ -34,10 +36,24 @@ def ingest_file(
     and skip it. Only meaningful with move=False (the watcher's case) — recording
     a path that ingest_file itself just deleted via move=True would record a
     path that no longer points at anything.
+
+    pickup_sidecar_notes=True (#5) looks for a same-basename .txt or .pdf next
+    to source_path — moving or copying the model file never touches that
+    sibling, so lookup order relative to the move/copy below doesn't matter —
+    and uses its text as the model's initial description. Off by default:
+    upload_model's source_path is a disposable temp file with no meaningful
+    siblings, so there's nothing useful to look for there.
     """
     mid = str(uuid.uuid4())
     ext = os.path.splitext(original_filename)[1] or ".stl"
     dest_path = os.path.join(UPLOAD_DIR, f"{mid}{ext}")
+
+    description = ""
+    if pickup_sidecar_notes:
+        notes = find_sidecar_notes(source_path)
+        if notes:
+            description = notes
+
     if move:
         shutil.move(source_path, dest_path)
     else:
@@ -52,7 +68,7 @@ def ingest_file(
         "size": size,
         "dateAdded": now_ms(),
         "tags": tags or [],
-        "description": "",
+        "description": description,
         "thumbnail": thumbnail,
     }
 

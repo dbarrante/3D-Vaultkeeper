@@ -58,6 +58,19 @@ def test_drive_scan_ingests_from_multiple_arbitrary_paths(client, tmp_path):
     assert {"a.stl", "b.3mf"}.issubset(names)
 
 
+def test_drive_scan_picks_up_sidecar_notes(client, tmp_path):
+    root = tmp_path / "old_downloads"
+    root.mkdir()
+    (root / "a.stl").write_bytes(b"solid a endsolid")
+    (root / "a.txt").write_text("Consolidated from an old backup, PLA only.")
+
+    client.post("/api/drive-scan", json={"paths": [str(root)], "folderId": "1"})
+
+    models = client.get("/api/models", params={"folderId": "1"}).json()
+    model = next(m for m in models if m["name"] == "a.stl")
+    assert model["description"] == "Consolidated from an old backup, PLA only."
+
+
 def test_drive_scan_skips_nonexistent_paths_without_failing(client, tmp_path):
     real = tmp_path / "real"
     real.mkdir()

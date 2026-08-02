@@ -38,6 +38,21 @@ import IconButton from "@mui/material/IconButton";
 import Tooltip from "@mui/material/Tooltip";
 import Menu from "@mui/material/Menu";
 import MenuItem from "@mui/material/MenuItem";
+import Select from "@mui/material/Select";
+import InputLabel from "@mui/material/InputLabel";
+import FormControl from "@mui/material/FormControl";
+
+const MODEL_CATEGORIES = [
+  "Functional",
+  "Decorative",
+  "Miniature / Figure",
+  "Mechanical Part",
+  "Toy",
+  "Terrain",
+  "Container / Organizer",
+  "Jewelry",
+  "Other",
+];
 
 interface DetailPanelProps {
   model: STLModel | null;
@@ -65,6 +80,11 @@ const DetailPanel: React.FC<DetailPanelProps> = ({
   const [editName, setEditName] = useState("");
   const [editDesc, setEditDesc] = useState("");
   const [editTags, setEditTags] = useState("");
+  const [editAuthor, setEditAuthor] = useState("");
+  const [editSourceUrl, setEditSourceUrl] = useState("");
+  const [editCategory, setEditCategory] = useState("");
+  const [editColorCount, setEditColorCount] = useState("");
+  const [editSliceSettings, setEditSliceSettings] = useState("");
   const [tempThumb, setTempThumb] = useState("");
   const [errorState, setErrorState] = useState<{
     show: boolean;
@@ -87,6 +107,11 @@ const DetailPanel: React.FC<DetailPanelProps> = ({
       setEditName(model.name);
       setEditDesc(model.description || "");
       setEditTags(model.tags.join(", "));
+      setEditAuthor(model.author || "");
+      setEditSourceUrl(model.sourceUrl || "");
+      setEditCategory(model.category || "");
+      setEditColorCount(model.colorCount != null ? String(model.colorCount) : "");
+      setEditSliceSettings(model.sliceSettings || "");
       setIsEditing(false);
       setIsReplacing(false);
       setTempThumb("");
@@ -232,19 +257,21 @@ const DetailPanel: React.FC<DetailPanelProps> = ({
       .map((t) => t.trim())
       .filter((t) => t.length > 0);
 
+    const metadataUpdates: Partial<STLModel> = {
+      name: newName,
+      description: editDesc,
+      tags: newTags,
+      author: editAuthor || null,
+      sourceUrl: editSourceUrl || null,
+      category: editCategory || null,
+      colorCount: editColorCount ? Number(editColorCount) : null,
+      sliceSettings: editSliceSettings || null,
+    };
+
     if (tempThumb != "") {
-      onUpdate(model.id, {
-        name: newName,
-        description: editDesc,
-        tags: newTags,
-        thumbnail: tempThumb,
-      });
+      onUpdate(model.id, { ...metadataUpdates, thumbnail: tempThumb });
     } else {
-      onUpdate(model.id, {
-        name: newName,
-        description: editDesc,
-        tags: newTags,
-      });
+      onUpdate(model.id, metadataUpdates);
     }
 
     setIsEditing(false);
@@ -548,6 +575,122 @@ const DetailPanel: React.FC<DetailPanelProps> = ({
                     {(model.size / (1024 * 1024)).toFixed(2)} MB
                   </Typography>
                 </Stack>
+              </div>
+
+              <div className="col-span-2 space-y-1">
+                <Typography variant="body2" sx={{ color: "text.secondary" }}>
+                  Author
+                </Typography>
+                {isEditing ? (
+                  <OutlinedInput
+                    fullWidth
+                    size="small"
+                    value={editAuthor}
+                    onChange={(e) => setEditAuthor(e.target.value)}
+                    placeholder="Designer / creator name"
+                  />
+                ) : (
+                  <Typography variant="caption">
+                    {model.author || "Unknown"}
+                  </Typography>
+                )}
+              </div>
+
+              <div className="col-span-2 space-y-1">
+                <Typography variant="body2" sx={{ color: "text.secondary" }}>
+                  Source URL
+                </Typography>
+                {isEditing ? (
+                  <OutlinedInput
+                    fullWidth
+                    size="small"
+                    value={editSourceUrl}
+                    onChange={(e) => setEditSourceUrl(e.target.value)}
+                    placeholder="Where this was downloaded from"
+                  />
+                ) : model.sourceUrl ? (
+                  <Typography variant="caption">
+                    <a
+                      href={model.sourceUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-blue-400 hover:underline break-all"
+                    >
+                      {model.sourceUrl}
+                    </a>
+                  </Typography>
+                ) : (
+                  <Typography variant="caption">Unknown</Typography>
+                )}
+              </div>
+
+              <div className="space-y-1">
+                <Typography variant="body2" sx={{ color: "text.secondary" }}>
+                  Category
+                </Typography>
+                {isEditing ? (
+                  <FormControl fullWidth size="small">
+                    <Select
+                      value={editCategory}
+                      displayEmpty
+                      onChange={(e) => setEditCategory(e.target.value)}
+                    >
+                      <MenuItem value="">
+                        <em>None</em>
+                      </MenuItem>
+                      {MODEL_CATEGORIES.map((cat) => (
+                        <MenuItem key={cat} value={cat}>
+                          {cat}
+                        </MenuItem>
+                      ))}
+                    </Select>
+                  </FormControl>
+                ) : (
+                  <Typography variant="caption">
+                    {model.category || "Uncategorized"}
+                  </Typography>
+                )}
+              </div>
+
+              <div className="space-y-1">
+                <Typography variant="body2" sx={{ color: "text.secondary" }}>
+                  Colors
+                </Typography>
+                {isEditing ? (
+                  <OutlinedInput
+                    fullWidth
+                    size="small"
+                    type="number"
+                    inputProps={{ min: 1 }}
+                    value={editColorCount}
+                    onChange={(e) => setEditColorCount(e.target.value)}
+                    placeholder="1"
+                  />
+                ) : (
+                  <Typography variant="caption">
+                    {model.colorCount ?? 1}
+                  </Typography>
+                )}
+              </div>
+
+              <div className="col-span-2 space-y-1">
+                <Typography variant="body2" sx={{ color: "text.secondary" }}>
+                  Print Settings
+                </Typography>
+                {isEditing ? (
+                  <TextField
+                    fullWidth
+                    size="small"
+                    value={editSliceSettings}
+                    onChange={(e) => setEditSliceSettings(e.target.value)}
+                    placeholder="0.2mm layers, 20% infill, supports..."
+                    multiline
+                  />
+                ) : (
+                  <Typography variant="caption" sx={{ whiteSpace: "pre-wrap" }}>
+                    {model.sliceSettings || "Not documented"}
+                  </Typography>
+                )}
               </div>
             </div>
             <Divider />
