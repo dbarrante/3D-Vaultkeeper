@@ -1,4 +1,11 @@
-import { Folder, STLModel, StorageStats, STLModelCollection } from "../types";
+import {
+  Folder,
+  STLModel,
+  StorageStats,
+  STLModelCollection,
+  WatchFolder,
+  InboxItem,
+} from "../types";
 
 let API_BASE_URL = "";
 
@@ -345,6 +352,77 @@ export const api = {
   getStorageStats: async (): Promise<StorageStats> => {
     const res = await fetch(`${API_BASE_URL}/storage-stats`);
     if (!res.ok) throw new Error("Failed to fetch storage stats");
+    return res.json();
+  },
+
+  // 16. WATCH FOLDERS
+  getWatchFolders: async (): Promise<WatchFolder[]> => {
+    const res = await fetch(`${API_BASE_URL}/watch-folders`);
+    if (!res.ok) throw new Error("Failed to fetch watch folders");
+    return res.json();
+  },
+
+  createWatchFolder: async (
+    path: string,
+    folderId: string,
+    frequencyMinutes: number,
+  ): Promise<WatchFolder> => {
+    const res = await fetch(`${API_BASE_URL}/watch-folders`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path, folderId, frequencyMinutes }),
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => null);
+      throw new Error(body?.detail || "Failed to create watch folder");
+    }
+    return res.json();
+  },
+
+  deleteWatchFolder: async (id: string): Promise<void> => {
+    const res = await fetch(`${API_BASE_URL}/watch-folders/${id}`, {
+      method: "DELETE",
+    });
+    if (!res.ok) throw new Error("Failed to delete watch folder");
+  },
+
+  scanWatchFolderNow: async (id: string): Promise<{ ingested: number }> => {
+    const res = await fetch(`${API_BASE_URL}/watch-folders/${id}/scan-now`, {
+      method: "POST",
+    });
+    if (!res.ok) throw new Error("Scan failed");
+    return res.json();
+  },
+
+  // 17. INBOX
+  getInbox: async (): Promise<InboxItem[]> => {
+    const res = await fetch(`${API_BASE_URL}/inbox`);
+    if (!res.ok) throw new Error("Failed to fetch inbox");
+    return res.json();
+  },
+
+  fileInboxItem: async (id: string, folderId: string): Promise<STLModel> => {
+    const res = await fetch(`${API_BASE_URL}/inbox/${id}/file`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ folderId }),
+    });
+    if (!res.ok) throw new Error("Failed to file inbox item");
+    return res.json();
+  },
+
+  dismissInboxItem: async (id: string): Promise<void> => {
+    const res = await fetch(`${API_BASE_URL}/inbox/${id}/dismiss`, {
+      method: "POST",
+    });
+    if (!res.ok) throw new Error("Failed to dismiss inbox item");
+  },
+
+  inboxScanNow: async (): Promise<{ added: number }> => {
+    const res = await fetch(`${API_BASE_URL}/inbox/scan-now`, {
+      method: "POST",
+    });
+    if (!res.ok) throw new Error("Inbox scan failed");
     return res.json();
   },
 };

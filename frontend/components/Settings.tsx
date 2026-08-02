@@ -15,6 +15,7 @@ import {
   SLICERS,
   SlicerType,
 } from "../services/api";
+import WatcherInbox from "./WatcherInbox";
 
 interface SettingsProps {
   onBack: () => void;
@@ -130,6 +131,8 @@ const Settings: React.FC<SettingsProps> = ({ onBack }) => {
 
       {/* Content Section */}
       <div className="flex-1 bg-vault-900/30 rounded-lg p-6 text-slate-300">
+        <WatcherInbox />
+
         {/* Slicer Settings */}
         <div className="mb-8">
           <div className="flex items-center gap-2 mb-4">

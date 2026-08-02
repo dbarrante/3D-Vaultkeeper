@@ -46,6 +46,22 @@ export interface StorageStats {
   total: number;
 }
 
+export interface WatchFolder {
+  id: string;
+  path: string;
+  folderId: string;
+  frequencyMinutes: number;
+  lastScanAt: number | null;
+  enabled: boolean;
+}
+
+export interface InboxItem {
+  id: string;
+  path: string;
+  detectedAt: number;
+  status: string;
+}
+
 export enum ViewMode {
   GRID = "GRID",
   LIST = "LIST",
