@@ -65,11 +65,34 @@ def init_db() -> None:
         ("category", "TEXT"),
         ("colorCount", "INTEGER"),
         ("sliceSettings", "TEXT"),
+        ("sourcePath", "TEXT"),
     ]:
         try:
             cur.execute(f"ALTER TABLE models ADD COLUMN {column} {coltype}")
         except sqlite3.OperationalError:
             pass
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS watch_folders (
+            id TEXT PRIMARY KEY,
+            path TEXT NOT NULL UNIQUE,
+            folderId TEXT NOT NULL,
+            frequencyMinutes INTEGER NOT NULL DEFAULT 60,
+            lastScanAt INTEGER,
+            enabled INTEGER NOT NULL DEFAULT 1
+        )
+        """
+    )
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS inbox_items (
+            id TEXT PRIMARY KEY,
+            path TEXT NOT NULL UNIQUE,
+            detectedAt INTEGER NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending'
+        )
+        """
+    )
     if os.getenv("MAKERWORLD_BAMBU_TOKEN"):
         cur.execute(
             "INSERT OR IGNORE INTO settings(key,value) VALUES (?,?)",
@@ -122,6 +145,7 @@ def row_to_model(row: sqlite3.Row) -> Dict[str, Any]:
         "category": row["category"] if "category" in row.keys() else None,
         "colorCount": row["colorCount"] if "colorCount" in row.keys() else None,
         "sliceSettings": row["sliceSettings"] if "sliceSettings" in row.keys() else None,
+        "sourcePath": row["sourcePath"] if "sourcePath" in row.keys() else None,
     }
 
 

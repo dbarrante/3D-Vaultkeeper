@@ -12,6 +12,7 @@ def client(tmp_path, monkeypatch):
     upload_dir.mkdir()
     monkeypatch.setenv("DB_PATH", str(db_path))
     monkeypatch.setenv("FILE_STORAGE", str(upload_dir))
+    monkeypatch.setenv("DISABLE_SCHEDULER", "1")  # see app/scheduler.py — never touch the real Downloads folder in tests
 
     for name in list(sys.modules):
         if name == "app" or name.startswith("app."):

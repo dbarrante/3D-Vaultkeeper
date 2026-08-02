@@ -14,6 +14,7 @@ def ingest_file(
     tags: Optional[List[str]] = None,
     thumbnail: Optional[str] = None,
     move: bool = False,
+    record_source: bool = False,
 ) -> dict:
     """Put a file already on disk into the library and register it as a model.
     Shared by manual upload, the folder watcher (Phase 1), and the acquisition
@@ -27,6 +28,12 @@ def ingest_file(
     to hand off here (upload_model; later, the acquisition drain worker's
     downloaded-to-a-temp-location files), a same-filesystem move is a single
     filesystem rename with no data copy at all.
+
+    record_source=True additionally persists source_path into models.sourcePath,
+    so a later scan of the same folder can tell this file was already ingested
+    and skip it. Only meaningful with move=False (the watcher's case) — recording
+    a path that ingest_file itself just deleted via move=True would record a
+    path that no longer points at anything.
     """
     mid = str(uuid.uuid4())
     ext = os.path.splitext(original_filename)[1] or ".stl"
@@ -52,10 +59,11 @@ def ingest_file(
     conn = get_db_conn()
     cur = conn.cursor()
     cur.execute(
-        "INSERT INTO models(id,name,folderId,url,size,dateAdded,tags,description,thumbnail) VALUES (?,?,?,?,?,?,?,?,?)",
+        "INSERT INTO models(id,name,folderId,url,size,dateAdded,tags,description,thumbnail,sourcePath) VALUES (?,?,?,?,?,?,?,?,?,?)",
         (
             model["id"], model["name"], model["folderId"], model["url"], model["size"],
             model["dateAdded"], json.dumps(model["tags"]), model["description"], model["thumbnail"],
+            source_path if record_source else None,
         ),
     )
     conn.commit()

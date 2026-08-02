@@ -3,7 +3,8 @@ from fastapi import FastAPI
 from starlette.middleware.cors import CORSMiddleware
 
 from app.db import init_db, UPLOAD_DIR, WEBUI_URL
-from app.routers import folders, models, manuals, settings, importers
+from app.routers import folders, models, manuals, settings, importers, watcher, inbox
+from app.scheduler import start_scheduler
 
 init_db()
 
@@ -21,6 +22,10 @@ app.include_router(models.router)
 app.include_router(manuals.router)
 app.include_router(settings.router)
 app.include_router(importers.router)
+app.include_router(watcher.router)
+app.include_router(inbox.router)
+
+start_scheduler(app)
 
 
 if __name__ == "__main__":
