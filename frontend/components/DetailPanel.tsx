@@ -85,6 +85,16 @@ const DetailPanel: React.FC<DetailPanelProps> = ({
   const [editCategory, setEditCategory] = useState("");
   const [editColorCount, setEditColorCount] = useState("");
   const [editSliceSettings, setEditSliceSettings] = useState("");
+
+  const [suggestingTags, setSuggestingTags] = useState(false);
+  const [tagSuggestError, setTagSuggestError] = useState("");
+  const [suggestingPricing, setSuggestingPricing] = useState(false);
+  const [pricingResult, setPricingResult] = useState<{
+    priceRange: string;
+    popularity: string;
+    reasoning: string;
+  } | null>(null);
+  const [pricingError, setPricingError] = useState("");
   const [tempThumb, setTempThumb] = useState("");
   const [errorState, setErrorState] = useState<{
     show: boolean;
@@ -116,6 +126,9 @@ const DetailPanel: React.FC<DetailPanelProps> = ({
       setIsReplacing(false);
       setTempThumb("");
       setErrorState({ show: false, message: "" });
+      setTagSuggestError("");
+      setPricingResult(null);
+      setPricingError("");
     }
   }, [model]);
 
@@ -234,6 +247,40 @@ const DetailPanel: React.FC<DetailPanelProps> = ({
       await onUploadManual(model.id, file);
     } finally {
       if (manualInputRef.current) manualInputRef.current.value = "";
+    }
+  };
+
+  const handleSuggestTags = async () => {
+    if (!model) return;
+    setSuggestingTags(true);
+    setTagSuggestError("");
+    try {
+      const { tags: suggested } = await api.suggestTags(model.id);
+      const existing = editTags
+        .split(",")
+        .map((t) => t.trim())
+        .filter(Boolean);
+      const merged = Array.from(new Set([...existing, ...suggested]));
+      setEditTags(merged.join(", "));
+    } catch (err: any) {
+      setTagSuggestError(err.message || "Failed to suggest tags");
+    } finally {
+      setSuggestingTags(false);
+    }
+  };
+
+  const handleSuggestPricing = async () => {
+    if (!model) return;
+    setSuggestingPricing(true);
+    setPricingError("");
+    setPricingResult(null);
+    try {
+      const result = await api.suggestPricing(model.id);
+      setPricingResult(result);
+    } catch (err: any) {
+      setPricingError(err.message || "Failed to suggest pricing");
+    } finally {
+      setSuggestingPricing(false);
     }
   };
 
@@ -502,13 +549,36 @@ const DetailPanel: React.FC<DetailPanelProps> = ({
                     Tags:
                   </Typography>
                   {isEditing ? (
-                    <TextField
-                      fullWidth
-                      value={editTags}
-                      onChange={(e) => setEditTags(e.target.value)}
-                      placeholder="scifi, armor, character..."
-                      multiline
-                    />
+                    <div className="flex-1 space-y-1">
+                      <div className="flex gap-2 items-start">
+                        <TextField
+                          fullWidth
+                          value={editTags}
+                          onChange={(e) => setEditTags(e.target.value)}
+                          placeholder="scifi, armor, character..."
+                          multiline
+                        />
+                        <Tooltip title="Suggest tags with AI (OpenRouter)">
+                          <span>
+                            <IconButton
+                              size="small"
+                              disabled={suggestingTags}
+                              onClick={handleSuggestTags}
+                              aria-label="suggest tags"
+                            >
+                              <Sparkles
+                                className={`w-4 h-4 ${suggestingTags ? "animate-pulse" : ""}`}
+                              />
+                            </IconButton>
+                          </span>
+                        </Tooltip>
+                      </div>
+                      {tagSuggestError && (
+                        <Typography variant="caption" color="error">
+                          {tagSuggestError}
+                        </Typography>
+                      )}
+                    </div>
                   ) : (
                     <Grid container spacing={1} columns={12}>
                       {model.tags.length > 0 ? (
@@ -690,6 +760,43 @@ const DetailPanel: React.FC<DetailPanelProps> = ({
                   <Typography variant="caption" sx={{ whiteSpace: "pre-wrap" }}>
                     {model.sliceSettings || "Not documented"}
                   </Typography>
+                )}
+              </div>
+
+              <div className="col-span-2 space-y-2 pt-1">
+                <Button
+                  size="small"
+                  variant="outlined"
+                  startIcon={
+                    <Sparkles
+                      className={`w-4 h-4 ${suggestingPricing ? "animate-pulse" : ""}`}
+                    />
+                  }
+                  disabled={suggestingPricing}
+                  onClick={handleSuggestPricing}
+                >
+                  {suggestingPricing
+                    ? "Estimating..."
+                    : "Suggest Etsy Pricing (AI)"}
+                </Button>
+                {pricingError && (
+                  <Typography variant="caption" color="error" display="block">
+                    {pricingError}
+                  </Typography>
+                )}
+                {pricingResult && (
+                  <div className="p-2 rounded-md border border-vault-700/50 bg-vault-900/40">
+                    <Typography variant="body2">
+                      <strong>{pricingResult.priceRange}</strong> ·{" "}
+                      {pricingResult.popularity} demand
+                    </Typography>
+                    <Typography
+                      variant="caption"
+                      sx={{ color: "text.secondary" }}
+                    >
+                      {pricingResult.reasoning}
+                    </Typography>
+                  </div>
                 )}
               </div>
             </div>

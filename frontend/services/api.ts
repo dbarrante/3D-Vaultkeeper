@@ -425,4 +425,58 @@ export const api = {
     if (!res.ok) throw new Error("Inbox scan failed");
     return res.json();
   },
+
+  // 18. AI (OpenRouter)
+  getOpenRouterKeyStatus: async (): Promise<IntegrationTokenStatus> => {
+    const res = await fetch(`${API_BASE_URL}/settings/openrouter-key`);
+    if (!res.ok) throw new Error("Failed to fetch OpenRouter key status");
+    return res.json();
+  },
+
+  updateOpenRouterKey: async (
+    token: string,
+  ): Promise<IntegrationTokenStatus> => {
+    const res = await fetch(`${API_BASE_URL}/settings/openrouter-key`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token }),
+    });
+    if (!res.ok) throw new Error("Failed to update OpenRouter key");
+    return res.json();
+  },
+
+  clearOpenRouterKey: async (): Promise<IntegrationTokenStatus> => {
+    const res = await fetch(`${API_BASE_URL}/settings/openrouter-key`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ clear: true }),
+    });
+    if (!res.ok) throw new Error("Failed to clear OpenRouter key");
+    return res.json();
+  },
+
+  suggestTags: async (modelId: string): Promise<{ tags: string[] }> => {
+    const res = await fetch(`${API_BASE_URL}/models/${modelId}/suggest-tags`, {
+      method: "POST",
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => null);
+      throw new Error(body?.detail || "Failed to suggest tags");
+    }
+    return res.json();
+  },
+
+  suggestPricing: async (
+    modelId: string,
+  ): Promise<{ priceRange: string; popularity: string; reasoning: string }> => {
+    const res = await fetch(
+      `${API_BASE_URL}/models/${modelId}/suggest-pricing`,
+      { method: "POST" },
+    );
+    if (!res.ok) {
+      const body = await res.json().catch(() => null);
+      throw new Error(body?.detail || "Failed to suggest pricing");
+    }
+    return res.json();
+  },
 };

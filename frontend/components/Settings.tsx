@@ -4,6 +4,7 @@ import {
   ChevronLeft,
   EthernetPort,
   KeyRound,
+  Sparkles,
   Wrench,
   X,
 } from "lucide-react";
@@ -32,6 +33,12 @@ const Settings: React.FC<SettingsProps> = ({ onBack }) => {
     useState(false);
   const [makerWorldToken, setMakerWorldToken] = useState("");
   const [makerWorldTokenStatus, setMakerWorldTokenStatus] = useState<
+    "idle" | "saved" | "cleared" | "error"
+  >("idle");
+  const [openRouterKeyConfigured, setOpenRouterKeyConfigured] =
+    useState(false);
+  const [openRouterKey, setOpenRouterKey] = useState("");
+  const [openRouterKeyStatus, setOpenRouterKeyStatus] = useState<
     "idle" | "saved" | "cleared" | "error"
   >("idle");
   const [launchSlicers, setLaunchSlicers] = useState<SlicerType[]>(() =>
@@ -68,6 +75,10 @@ const Settings: React.FC<SettingsProps> = ({ onBack }) => {
       .getMakerWorldTokenStatus()
       .then((status) => setMakerWorldTokenConfigured(status.configured))
       .catch(() => setMakerWorldTokenStatus("error"));
+    api
+      .getOpenRouterKeyStatus()
+      .then((status) => setOpenRouterKeyConfigured(status.configured))
+      .catch(() => setOpenRouterKeyStatus("error"));
   }, []);
 
   const handleMakerWorldTokenSubmit = async (e: React.FormEvent) => {
@@ -92,6 +103,31 @@ const Settings: React.FC<SettingsProps> = ({ onBack }) => {
       setMakerWorldTokenStatus("cleared");
     } catch (error) {
       setMakerWorldTokenStatus("error");
+    }
+  };
+
+  const handleOpenRouterKeySubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!openRouterKey.trim()) return;
+
+    try {
+      const status = await api.updateOpenRouterKey(openRouterKey.trim());
+      setOpenRouterKeyConfigured(status.configured);
+      setOpenRouterKey("");
+      setOpenRouterKeyStatus("saved");
+    } catch (error) {
+      setOpenRouterKeyStatus("error");
+    }
+  };
+
+  const handleOpenRouterKeyClear = async () => {
+    try {
+      const status = await api.clearOpenRouterKey();
+      setOpenRouterKeyConfigured(status.configured);
+      setOpenRouterKey("");
+      setOpenRouterKeyStatus("cleared");
+    } catch (error) {
+      setOpenRouterKeyStatus("error");
     }
   };
 
@@ -240,6 +276,76 @@ const Settings: React.FC<SettingsProps> = ({ onBack }) => {
               <span className="text-xs text-amber-400">Cleared</span>
             )}
             {makerWorldTokenStatus === "error" && (
+              <span className="text-xs text-red-400">Update failed</span>
+            )}
+          </div>
+        </div>
+
+        {/* AI Provider (OpenRouter) Settings */}
+        <div className="mb-8">
+          <div className="flex items-center gap-2 mb-4">
+            <Sparkles className="w-5 h-5 text-blue-400" />
+            <h3 className="text-lg font-semibold text-white">
+              AI Provider (OpenRouter)
+            </h3>
+          </div>
+          <p className="text-sm text-slate-400 mb-4">
+            Add your own OpenRouter API key to enable AI tag suggestions and
+            Etsy pricing estimates on the model detail panel. Your key is
+            stored locally on your own server, never sent anywhere but
+            OpenRouter.
+          </p>
+          <form onSubmit={handleOpenRouterKeySubmit}>
+            <div className="grid grid-cols-1 sm:grid-cols-[1fr_auto] gap-3">
+              <input
+                type="password"
+                className="w-full bg-vault-900 border border-vault-700 rounded-md px-3 py-2 text-white focus:border-indigo-500 outline-none placeholder:text-slate-600"
+                placeholder={
+                  openRouterKeyConfigured
+                    ? "Key configured; paste a new key to replace it"
+                    : "Paste OpenRouter API key (sk-or-...)"
+                }
+                value={openRouterKey}
+                onChange={(e) => {
+                  setOpenRouterKey(e.target.value);
+                  setOpenRouterKeyStatus("idle");
+                }}
+              />
+              <button
+                type="submit"
+                disabled={!openRouterKey.trim()}
+                className="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Save
+              </button>
+            </div>
+          </form>
+          <div className="mt-3 flex flex-wrap items-center gap-3">
+            <span
+              className={`text-xs ${
+                openRouterKeyConfigured ? "text-green-400" : "text-amber-400"
+              }`}
+            >
+              {openRouterKeyConfigured
+                ? "Key configured"
+                : "Key not configured"}
+            </span>
+            {openRouterKeyConfigured && (
+              <button
+                type="button"
+                onClick={handleOpenRouterKeyClear}
+                className="text-xs text-slate-400 hover:text-white underline"
+              >
+                Clear key
+              </button>
+            )}
+            {openRouterKeyStatus === "saved" && (
+              <span className="text-xs text-green-400">Saved</span>
+            )}
+            {openRouterKeyStatus === "cleared" && (
+              <span className="text-xs text-amber-400">Cleared</span>
+            )}
+            {openRouterKeyStatus === "error" && (
               <span className="text-xs text-red-400">Update failed</span>
             )}
           </div>
