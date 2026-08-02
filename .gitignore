@@ -46,6 +46,7 @@ bun.lock
 /backend/__pycache__/
 /backend/data/
 /backend/*.db
+/backend/*.db-journal
 /backend/uploads/
 # app/uploads is FILE_STORAGE's local-dev fallback path (see app/db.py) when the
 # env var isn't set — NOT the app/ Python package itself, which is real source.

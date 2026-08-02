@@ -1,8 +1,9 @@
-import multiprocessing
 import os
+import subprocess
+import sys
 import uuid
 from pathlib import Path
-from typing import Callable, List, Optional
+from typing import List, Optional
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -12,8 +13,7 @@ from app.services.scan import scan_watch_folder, find_new_files
 from app.services.ingestion import ingest_file
 
 try:
-    import tkinter  # noqa: F401 — presence check only; the dialog itself only ever runs in the child process
-    from tkinter import filedialog  # noqa: F401
+    import tkinter  # noqa: F401 — presence check only; the real check happens in the subprocess
 
     TKINTER_AVAILABLE = True
 except ImportError:
@@ -26,44 +26,42 @@ router = APIRouter()
 
 BROWSE_DIALOG_TIMEOUT_SECONDS = 120
 
+# Deliberately a bare, self-contained script with zero relation to the app
+# package — no `import app`, no FastAPI, nothing. A first version of this
+# feature used multiprocessing.Process instead of subprocess.run, and that
+# broke a real user's server: on Windows, multiprocessing's "spawn" start
+# method bootstraps a child by re-invoking the *exact command line the
+# parent process was launched with* — which, since this app runs as
+# `python -m uvicorn app.main:app --host ... --port 8998`, meant clicking
+# Browse spawned a second full copy of the server that immediately crashed
+# trying to rebind the same port, taking the real one down with it.
+# Confirmed live: the process tree showed a second `-m uvicorn app.main:app`
+# process as a direct child of the real one. subprocess.run with an explicit
+# `-c <script>` has no such entry point to re-invoke — it just runs exactly
+# the script given to it, nothing else.
+DIALOG_SCRIPT = """
+import sys
+try:
+    import tkinter
+    from tkinter import filedialog
+    root = tkinter.Tk()
+    root.withdraw()
+    root.attributes("-topmost", True)
+    selected = filedialog.askdirectory()
+    root.destroy()
+    sys.stdout.write("OK:" + (selected or ""))
+except Exception as e:
+    sys.stdout.write("ERROR:" + str(e))
+    sys.exit(1)
+"""
 
-def _dialog_worker(result_queue) -> None:
-    """Runs the native folder picker in its own OS process, spawned fresh —
-    never imported/inherited from the parent. Must stay at module level:
-    multiprocessing's Windows "spawn" start method pickles the target by
-    its import path, so a nested/lambda function can't be used here.
 
-    This isolation is the actual point of this design, confirmed necessary
-    by a real report: on at least one user's machine, opening this dialog
-    took down the whole backend process outright (crash-adjacent behavior
-    consistent with a native-level Tcl/Tk fault, which no amount of Python
-    try/except in the parent process can catch). Running it in a fully
-    separate process means that failure — whatever its exact cause on a
-    given machine — can only kill this one throwaway child, never the
-    server handling everything else.
-    """
-    try:
-        import tkinter
-        from tkinter import filedialog as _filedialog
-
-        root = tkinter.Tk()
-        root.withdraw()
-        root.attributes("-topmost", True)
-        selected = _filedialog.askdirectory()
-        root.destroy()
-        result_queue.put(("ok", selected or None))
-    except Exception as e:
-        result_queue.put(("error", str(e)))
-
-
-def run_folder_dialog_isolated(
-    timeout_seconds: int = BROWSE_DIALOG_TIMEOUT_SECONDS,
-    worker: Callable = _dialog_worker,
-) -> dict:
-    """Spawns `worker` in an isolated child process and waits up to
-    `timeout_seconds` for a result. `worker` is swappable so tests can
-    substitute a fast, deterministic stand-in instead of a real GUI dialog —
-    production code never passes it, always using the real `_dialog_worker`.
+def run_folder_dialog_isolated(timeout_seconds: int = BROWSE_DIALOG_TIMEOUT_SECONDS) -> dict:
+    """Runs DIALOG_SCRIPT in a brand-new `python -c` process and waits up to
+    `timeout_seconds` for it to finish. Whatever goes wrong inside that
+    process — a crash, a hang, tkinter being broken on this machine — is
+    contained to that one throwaway process and reported back as a clean
+    HTTP error, never taking the real server down with it.
     """
     if not TKINTER_AVAILABLE:
         raise HTTPException(
@@ -71,38 +69,28 @@ def run_folder_dialog_isolated(
             detail="Folder browser is unavailable on this server — enter the path manually.",
         )
 
-    ctx = multiprocessing.get_context("spawn")
-    result_queue = ctx.Queue()
-    process = ctx.Process(target=worker, args=(result_queue,), daemon=True)
-    process.start()
-    process.join(timeout_seconds)
-
-    if process.is_alive():
-        process.terminate()
-        process.join(5)
+    try:
+        result = subprocess.run(
+            [sys.executable, "-c", DIALOG_SCRIPT],
+            capture_output=True,
+            text=True,
+            timeout=timeout_seconds,
+        )
+    except subprocess.TimeoutExpired:
         raise HTTPException(
             status_code=504,
             detail="Folder browser timed out — enter the path manually.",
         )
 
-    try:
-        status, value = result_queue.get_nowait()
-    except Exception:
-        # Process exited (crashed, or was killed) without ever putting a
-        # result on the queue — exactly the case this whole design exists
-        # to survive without taking the server down with it.
+    output = result.stdout.strip()
+    if result.returncode != 0 or not output.startswith("OK:"):
         raise HTTPException(
             status_code=503,
             detail="Folder browser closed unexpectedly (it may have crashed) — enter the path manually.",
         )
 
-    if status == "error":
-        raise HTTPException(
-            status_code=503,
-            detail=f"Folder browser failed: {value} — enter the path manually.",
-        )
-
-    return {"path": value}
+    path = output[len("OK:"):]
+    return {"path": path or None}
 
 
 class WatchFolderData(BaseModel):
