@@ -7,13 +7,20 @@ import {
   InboxItem,
 } from "../types";
 
-let API_BASE_URL = "";
-
-if (localStorage.getItem("api-port-override")) {
-  API_BASE_URL = localStorage.getItem("api-port-override") + "/api";
-} else {
-  const url = import.meta.env.VITE_API_URL + "/api";
-  API_BASE_URL = url;
+// Resolved fresh on every call, not cached at module-load time. The
+// localStorage override (set via Settings -> API Host) is meant to let you
+// point the app at a different backend without rebuilding — but a plain
+// module-level constant only reads localStorage once, when this file is
+// first imported. Setting the override afterward updates localStorage
+// correctly, yet every fetch in this file kept using the stale value forever
+// (no full page reload prompted anywhere), which is exactly why "Add Watched
+// Folder" stayed disabled and inbox/watch-folder requests came back as
+// "Unexpected token '<', <!DOCTYPE" — they were hitting the Vite dev server's
+// own SPA-fallback HTML instead of the real backend.
+function getApiBaseUrl(): string {
+  const override = localStorage.getItem("api-port-override");
+  if (override) return override + "/api";
+  return import.meta.env.VITE_API_URL + "/api";
 }
 
 // --- API SERVICE ---
@@ -78,7 +85,7 @@ export const setEnabledLaunchSlicers = (slicers: SlicerType[]) => {
 export const api = {
   // 1. GET Folders
   getFolders: async (): Promise<Folder[]> => {
-    const res = await fetch(`${API_BASE_URL}/folders`);
+    const res = await fetch(`${getApiBaseUrl()}/folders`);
     if (!res.ok) throw new Error("Failed to fetch folders");
     return res.json();
   },
@@ -88,7 +95,7 @@ export const api = {
     name: string,
     parentId: string | null = null,
   ): Promise<Folder> => {
-    const res = await fetch(`${API_BASE_URL}/folders`, {
+    const res = await fetch(`${getApiBaseUrl()}/folders`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name, parentId }),
@@ -99,7 +106,7 @@ export const api = {
 
   // 3. UPDATE Folder (Rename/Move)
   updateFolder: async (id: string, name: string): Promise<Folder> => {
-    const res = await fetch(`${API_BASE_URL}/folders/${id}`, {
+    const res = await fetch(`${getApiBaseUrl()}/folders/${id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name }),
@@ -110,7 +117,7 @@ export const api = {
 
   // 4. DELETE Folder
   deleteFolder: async (id: string): Promise<void> => {
-    const res = await fetch(`${API_BASE_URL}/folders/${id}`, {
+    const res = await fetch(`${getApiBaseUrl()}/folders/${id}`, {
       method: "DELETE",
     });
     if (!res.ok) throw new Error("Delete failed");
@@ -119,7 +126,7 @@ export const api = {
   // 5. GET Models
   getModels: async (folderId?: string): Promise<STLModel[]> => {
     const query = folderId && folderId !== "all" ? `?folderId=${folderId}` : "";
-    const res = await fetch(`${API_BASE_URL}/models${query}`);
+    const res = await fetch(`${getApiBaseUrl()}/models${query}`);
     if (!res.ok) throw new Error("Failed to fetch models");
     return res.json();
   },
@@ -137,7 +144,7 @@ export const api = {
     if (thumbnail) formData.append("thumbnail", thumbnail); // Send base64 thumbnail
     if (tags.length > 0) formData.append("tags", JSON.stringify(tags));
 
-    const res = await fetch(`${API_BASE_URL}/models/upload`, {
+    const res = await fetch(`${getApiBaseUrl()}/models/upload`, {
       method: "POST",
       body: formData,
     });
@@ -151,7 +158,7 @@ export const api = {
     id: string,
     updates: Partial<STLModel>,
   ): Promise<STLModel> => {
-    const res = await fetch(`${API_BASE_URL}/models/${id}`, {
+    const res = await fetch(`${getApiBaseUrl()}/models/${id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(updates),
@@ -164,7 +171,7 @@ export const api = {
   deleteModel: async (id: string): Promise<void> => {
     console.log("API: Deleting model", id);
 
-    const res = await fetch(`${API_BASE_URL}/models/${id}`, {
+    const res = await fetch(`${getApiBaseUrl()}/models/${id}`, {
       method: "DELETE",
     });
     if (!res.ok) throw new Error("Delete failed");
@@ -172,12 +179,12 @@ export const api = {
 
   // 9. GET Download URL
   getDownloadUrl: (model: STLModel) => {
-    return `${API_BASE_URL}/models/${model.id}/download`;
+    return `${getApiBaseUrl()}/models/${model.id}/download`;
   },
 
   //9b. GET slicer Weblink
   getSlicerUrl: (model: STLModel, slicer?: SlicerType) => {
-    const modelURL = `${API_BASE_URL}/models/${model.id}/download`;
+    const modelURL = `${getApiBaseUrl()}/models/${model.id}/download`;
 
     // Get user's preferred slicer from localStorage
     let slicerPreference =
@@ -196,7 +203,7 @@ export const api = {
   bulkDeleteModels: async (ids: string[]): Promise<void> => {
     console.log("API: Bulk deleting models", ids);
 
-    const res = await fetch(`${API_BASE_URL}/models/bulk-delete`, {
+    const res = await fetch(`${getApiBaseUrl()}/models/bulk-delete`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ ids }),
@@ -206,7 +213,7 @@ export const api = {
 
   // 11. BULK MOVE
   bulkMoveModels: async (ids: string[], folderId: string): Promise<void> => {
-    const res = await fetch(`${API_BASE_URL}/models/bulk-move`, {
+    const res = await fetch(`${getApiBaseUrl()}/models/bulk-move`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ ids, folderId }),
@@ -216,7 +223,7 @@ export const api = {
 
   // 12. BULK TAG
   bulkAddTags: async (ids: string[], tags: string[]): Promise<void> => {
-    const res = await fetch(`${API_BASE_URL}/models/bulk-tag`, {
+    const res = await fetch(`${getApiBaseUrl()}/models/bulk-tag`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ ids, tags }),
@@ -226,7 +233,7 @@ export const api = {
 
   // 13. RETRIEVE MODEL OPTIONS
   retrieveModelOptions: async (url: string): Promise<STLModelCollection[]> => {
-    const res = await fetch(`${API_BASE_URL}/import/options`, {
+    const res = await fetch(`${getApiBaseUrl()}/import/options`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ url }),
@@ -245,7 +252,7 @@ export const api = {
     typeName: string,
     source: string = "printables",
   ): Promise<STLModel> => {
-    const res = await fetch(`${API_BASE_URL}/import/importid`, {
+    const res = await fetch(`${getApiBaseUrl()}/import/importid`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -263,7 +270,7 @@ export const api = {
   },
 
   getMakerWorldTokenStatus: async (): Promise<IntegrationTokenStatus> => {
-    const res = await fetch(`${API_BASE_URL}/settings/makerworld-token`);
+    const res = await fetch(`${getApiBaseUrl()}/settings/makerworld-token`);
     if (!res.ok) throw new Error("Failed to fetch MakerWorld token status");
     return res.json();
   },
@@ -271,7 +278,7 @@ export const api = {
   updateMakerWorldToken: async (
     token: string,
   ): Promise<IntegrationTokenStatus> => {
-    const res = await fetch(`${API_BASE_URL}/settings/makerworld-token`, {
+    const res = await fetch(`${getApiBaseUrl()}/settings/makerworld-token`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ token }),
@@ -281,7 +288,7 @@ export const api = {
   },
 
   clearMakerWorldToken: async (): Promise<IntegrationTokenStatus> => {
-    const res = await fetch(`${API_BASE_URL}/settings/makerworld-token`, {
+    const res = await fetch(`${getApiBaseUrl()}/settings/makerworld-token`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ clear: true }),
@@ -300,7 +307,7 @@ export const api = {
     formData.append("file", file);
     if (thumbnail) formData.append("thumbnail", thumbnail);
 
-    const res = await fetch(`${API_BASE_URL}/models/${id}/file`, {
+    const res = await fetch(`${getApiBaseUrl()}/models/${id}/file`, {
       method: "PUT",
       body: formData,
     });
@@ -313,7 +320,7 @@ export const api = {
     const formData = new FormData();
     formData.append("file", file);
 
-    const res = await fetch(`${API_BASE_URL}/models/${id}/thumbnail`, {
+    const res = await fetch(`${getApiBaseUrl()}/models/${id}/thumbnail`, {
       method: "PUT",
       body: formData,
     });
@@ -323,7 +330,7 @@ export const api = {
 
   // 14b. GET Manual URL
   getManualUrl: (model: STLModel) => {
-    return `${API_BASE_URL}/models/${model.id}/manual`;
+    return `${getApiBaseUrl()}/models/${model.id}/manual`;
   },
 
   // 14c. UPLOAD Manual
@@ -331,7 +338,7 @@ export const api = {
     const formData = new FormData();
     formData.append("file", file);
 
-    const res = await fetch(`${API_BASE_URL}/models/${id}/manual`, {
+    const res = await fetch(`${getApiBaseUrl()}/models/${id}/manual`, {
       method: "PUT",
       body: formData,
     });
@@ -341,7 +348,7 @@ export const api = {
 
   // 14d. DELETE Manual
   deleteManual: async (id: string): Promise<STLModel> => {
-    const res = await fetch(`${API_BASE_URL}/models/${id}/manual`, {
+    const res = await fetch(`${getApiBaseUrl()}/models/${id}/manual`, {
       method: "DELETE",
     });
     if (!res.ok) throw new Error("Manual delete failed");
@@ -350,14 +357,14 @@ export const api = {
 
   // 15. GET Storage Stats
   getStorageStats: async (): Promise<StorageStats> => {
-    const res = await fetch(`${API_BASE_URL}/storage-stats`);
+    const res = await fetch(`${getApiBaseUrl()}/storage-stats`);
     if (!res.ok) throw new Error("Failed to fetch storage stats");
     return res.json();
   },
 
   // 16. WATCH FOLDERS
   getWatchFolders: async (): Promise<WatchFolder[]> => {
-    const res = await fetch(`${API_BASE_URL}/watch-folders`);
+    const res = await fetch(`${getApiBaseUrl()}/watch-folders`);
     if (!res.ok) throw new Error("Failed to fetch watch folders");
     return res.json();
   },
@@ -367,7 +374,7 @@ export const api = {
     folderId: string,
     frequencyMinutes: number,
   ): Promise<WatchFolder> => {
-    const res = await fetch(`${API_BASE_URL}/watch-folders`, {
+    const res = await fetch(`${getApiBaseUrl()}/watch-folders`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ path, folderId, frequencyMinutes }),
@@ -380,14 +387,14 @@ export const api = {
   },
 
   deleteWatchFolder: async (id: string): Promise<void> => {
-    const res = await fetch(`${API_BASE_URL}/watch-folders/${id}`, {
+    const res = await fetch(`${getApiBaseUrl()}/watch-folders/${id}`, {
       method: "DELETE",
     });
     if (!res.ok) throw new Error("Failed to delete watch folder");
   },
 
   scanWatchFolderNow: async (id: string): Promise<{ ingested: number }> => {
-    const res = await fetch(`${API_BASE_URL}/watch-folders/${id}/scan-now`, {
+    const res = await fetch(`${getApiBaseUrl()}/watch-folders/${id}/scan-now`, {
       method: "POST",
     });
     if (!res.ok) throw new Error("Scan failed");
@@ -396,13 +403,13 @@ export const api = {
 
   // 17. INBOX
   getInbox: async (): Promise<InboxItem[]> => {
-    const res = await fetch(`${API_BASE_URL}/inbox`);
+    const res = await fetch(`${getApiBaseUrl()}/inbox`);
     if (!res.ok) throw new Error("Failed to fetch inbox");
     return res.json();
   },
 
   fileInboxItem: async (id: string, folderId: string): Promise<STLModel> => {
-    const res = await fetch(`${API_BASE_URL}/inbox/${id}/file`, {
+    const res = await fetch(`${getApiBaseUrl()}/inbox/${id}/file`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ folderId }),
@@ -412,14 +419,14 @@ export const api = {
   },
 
   dismissInboxItem: async (id: string): Promise<void> => {
-    const res = await fetch(`${API_BASE_URL}/inbox/${id}/dismiss`, {
+    const res = await fetch(`${getApiBaseUrl()}/inbox/${id}/dismiss`, {
       method: "POST",
     });
     if (!res.ok) throw new Error("Failed to dismiss inbox item");
   },
 
   inboxScanNow: async (): Promise<{ added: number }> => {
-    const res = await fetch(`${API_BASE_URL}/inbox/scan-now`, {
+    const res = await fetch(`${getApiBaseUrl()}/inbox/scan-now`, {
       method: "POST",
     });
     if (!res.ok) throw new Error("Inbox scan failed");
@@ -428,7 +435,7 @@ export const api = {
 
   // 18. AI (OpenRouter)
   getOpenRouterKeyStatus: async (): Promise<IntegrationTokenStatus> => {
-    const res = await fetch(`${API_BASE_URL}/settings/openrouter-key`);
+    const res = await fetch(`${getApiBaseUrl()}/settings/openrouter-key`);
     if (!res.ok) throw new Error("Failed to fetch OpenRouter key status");
     return res.json();
   },
@@ -436,7 +443,7 @@ export const api = {
   updateOpenRouterKey: async (
     token: string,
   ): Promise<IntegrationTokenStatus> => {
-    const res = await fetch(`${API_BASE_URL}/settings/openrouter-key`, {
+    const res = await fetch(`${getApiBaseUrl()}/settings/openrouter-key`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ token }),
@@ -446,7 +453,7 @@ export const api = {
   },
 
   clearOpenRouterKey: async (): Promise<IntegrationTokenStatus> => {
-    const res = await fetch(`${API_BASE_URL}/settings/openrouter-key`, {
+    const res = await fetch(`${getApiBaseUrl()}/settings/openrouter-key`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ clear: true }),
@@ -456,7 +463,7 @@ export const api = {
   },
 
   suggestTags: async (modelId: string): Promise<{ tags: string[] }> => {
-    const res = await fetch(`${API_BASE_URL}/models/${modelId}/suggest-tags`, {
+    const res = await fetch(`${getApiBaseUrl()}/models/${modelId}/suggest-tags`, {
       method: "POST",
     });
     if (!res.ok) {
@@ -470,7 +477,7 @@ export const api = {
     modelId: string,
   ): Promise<{ priceRange: string; popularity: string; reasoning: string }> => {
     const res = await fetch(
-      `${API_BASE_URL}/models/${modelId}/suggest-pricing`,
+      `${getApiBaseUrl()}/models/${modelId}/suggest-pricing`,
       { method: "POST" },
     );
     if (!res.ok) {

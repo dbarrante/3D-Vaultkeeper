@@ -31,13 +31,12 @@ import * as THREE from "three";
 import { LoadStep } from "./STEPLoader";
 import Button from "@mui/material/Button";
 
-let API_BASE_URL = "";
-
-if (localStorage.getItem("api-port-override")) {
-  API_BASE_URL = localStorage.getItem("api-port-override");
-} else {
-  const url = import.meta.env.VITE_API_URL;
-  API_BASE_URL = url;
+// Resolved fresh on every call — see services/api.ts's getApiBaseUrl() for why
+// this can't be a module-level constant computed once at import time.
+function getApiBaseUrl(): string {
+  const override = localStorage.getItem("api-port-override");
+  if (override) return override;
+  return import.meta.env.VITE_API_URL;
 }
 
 // Defined before usage to ensure proper type resolution
@@ -100,7 +99,7 @@ const Model = ({
   const Loader = ext == "3mf" ? ThreeMFLoader : STLLoader;
 
   // Use the appropriate loader
-  const urlpath = API_BASE_URL + url;
+  const urlpath = getApiBaseUrl() + url;
   let data = useLoader(Loader as any, urlpath);
 
   const modelObject = useMemo(() => {
@@ -192,7 +191,7 @@ const StepModel = ({
   const [obj, setObj] = useState(null);
   useEffect(() => {
     async function load() {
-      const urlpath = API_BASE_URL + url;
+      const urlpath = getApiBaseUrl() + url;
       const mainObject = await LoadStep(urlpath);
       setObj(mainObject);
     }
