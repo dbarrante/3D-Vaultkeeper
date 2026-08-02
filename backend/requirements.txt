@@ -5,3 +5,5 @@ aiofiles>=23.1.0
 requests>=2.31.0
 starlette==0.38.5
 pydantic==2.12.5
+pytest>=7.4.0
+httpx>=0.24.0

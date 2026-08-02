@@ -1,0 +1,249 @@
+import os
+import json
+import base64
+import tempfile
+import shutil
+from typing import Optional, List
+
+from fastapi import APIRouter, UploadFile, File, Form, HTTPException
+from fastapi.responses import FileResponse
+
+from app.db import get_db_conn, row_to_model, save_upload_file, UPLOAD_DIR, MANUAL_DIR
+from app.services.ingestion import ingest_file
+
+router = APIRouter()
+
+
+def get_model_info(modelId):
+    conn = get_db_conn()
+    cur = conn.cursor()
+    m = None
+    if modelId is not None:
+        m = cur.execute("SELECT * FROM models WHERE id=?", (modelId,)).fetchone()
+    else:
+        return None
+    conn.close()
+    return row_to_model(m)
+
+
+@router.get("/api/models")
+def get_models(folderId: Optional[str] = None):
+    conn = get_db_conn()
+    cur = conn.cursor()
+    if folderId and folderId != "all":
+        cur.execute("SELECT * FROM models WHERE folderId=?", (folderId,))
+    else:
+        cur.execute("SELECT * FROM models")
+    rows = cur.fetchall()
+    conn.close()
+    return [row_to_model(r) for r in rows]
+
+
+@router.post("/api/models/upload")
+def upload_model(
+    file: UploadFile = File(...),
+    folderId: str = Form("1"),
+    thumbnail: Optional[str] = Form(None),
+    tags: Optional[str] = Form(None),
+):
+    tag_list: List[str] = []
+    if tags:
+        try:
+            tag_list = json.loads(tags)
+        except Exception:
+            tag_list = [t.strip() for t in (tags or "").split(",") if t.strip()]
+
+    filename_str = file.filename or ".stl"
+    suffix = os.path.splitext(filename_str)[1] or ".stl"
+    fd, tmp_path = tempfile.mkstemp(suffix=suffix, dir=UPLOAD_DIR)
+    with os.fdopen(fd, "wb") as tmp:
+        shutil.copyfileobj(file.file, tmp)  # streamed, not file.file.read() — never buffers the whole upload
+    try:
+        return ingest_file(tmp_path, folderId, filename_str, tags=tag_list, thumbnail=thumbnail, move=True)
+    finally:
+        if os.path.exists(tmp_path):  # already gone after a successful move; only cleans up on an ingest_file failure
+            os.remove(tmp_path)
+
+
+@router.patch("/api/models/{model_id}")
+def update_model(model_id: str, updates: dict):
+    conn = get_db_conn()
+    cur = conn.cursor()
+    m = cur.execute("SELECT * FROM models WHERE id=?", (model_id,)).fetchone()
+    if not m:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Model not found")
+
+    allowed = ["name", "folderId", "tags", "description", "thumbnail", "author", "sourceUrl", "category", "colorCount", "sliceSettings"]
+    fields, values = [], []
+    for k in allowed:
+        if k in updates:
+            values.append(json.dumps(updates[k] or []) if k == "tags" else updates[k])
+            fields.append(f"{k}=?")
+
+    if fields:
+        cur.execute(f"UPDATE models SET {', '.join(fields)} WHERE id=?", (*values, model_id))
+        conn.commit()
+
+    row = cur.execute("SELECT * FROM models WHERE id=?", (model_id,)).fetchone()
+    conn.close()
+    return row_to_model(row)
+
+
+@router.delete("/api/models/{model_id}")
+def delete_model(model_id: str):
+    conn = get_db_conn()
+    cur = conn.cursor()
+    m = cur.execute("SELECT * FROM models WHERE id=?", (model_id,)).fetchone()
+    if not m:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Model not found")
+    for fname in os.listdir(UPLOAD_DIR):
+        if fname.startswith(model_id):
+            try:
+                os.remove(os.path.join(UPLOAD_DIR, fname))
+            except Exception:
+                pass
+    manual_path = MANUAL_DIR / f"{model_id}.md"
+    if manual_path.exists():
+        try:
+            manual_path.unlink()
+        except Exception:
+            pass
+    cur.execute("DELETE FROM models WHERE id=?", (model_id,))
+    conn.commit()
+    conn.close()
+    return {"ok": True}
+
+
+@router.get("/api/models/{model_id}/download")
+def download_model(model_id: str):
+    m_info = get_model_info(model_id)
+    for fname in os.listdir(UPLOAD_DIR):
+        if fname.startswith(model_id):
+            return FileResponse(
+                os.path.join(UPLOAD_DIR, fname),
+                media_type="application/octet-stream",
+                filename=m_info["name"],
+            )
+    raise HTTPException(status_code=404, detail="File not found")
+
+
+@router.post("/api/models/bulk-delete")
+def bulk_delete(payload: dict):
+    ids = payload.get("ids", [])
+    conn = get_db_conn()
+    cur = conn.cursor()
+    for mid in ids:
+        for fname in os.listdir(UPLOAD_DIR):
+            if fname.startswith(mid):
+                try:
+                    os.remove(os.path.join(UPLOAD_DIR, fname))
+                except Exception:
+                    pass
+        manual_path = MANUAL_DIR / f"{mid}.md"
+        if manual_path.exists():
+            try:
+                manual_path.unlink()
+            except Exception:
+                pass
+        cur.execute("DELETE FROM models WHERE id=?", (mid,))
+    conn.commit()
+    conn.close()
+    return {"ok": True}
+
+
+@router.post("/api/models/bulk-move")
+def bulk_move(payload: dict):
+    ids = payload.get("ids", [])
+    folderId = payload.get("folderId")
+    conn = get_db_conn()
+    cur = conn.cursor()
+    for mid in ids:
+        cur.execute("UPDATE models SET folderId=? WHERE id=?", (folderId, mid))
+    conn.commit()
+    conn.close()
+    return {"ok": True}
+
+
+@router.post("/api/models/bulk-tag")
+def bulk_tag(payload: dict):
+    ids = payload.get("ids", [])
+    tags = payload.get("tags", [])
+    conn = get_db_conn()
+    cur = conn.cursor()
+    for mid in ids:
+        row = cur.execute("SELECT tags FROM models WHERE id=?", (mid,)).fetchone()
+        if not row:
+            continue
+        existing = []
+        if row["tags"]:
+            try:
+                existing = json.loads(row["tags"])
+            except Exception:
+                existing = []
+        merged = list(dict.fromkeys(existing + tags))
+        cur.execute("UPDATE models SET tags=? WHERE id=?", (json.dumps(merged), mid))
+    conn.commit()
+    conn.close()
+    return {"ok": True}
+
+
+@router.put("/api/models/{model_id}/file")
+def replace_model_file(model_id: str, file: UploadFile = File(...), thumbnail: Optional[str] = Form(None)):
+    conn = get_db_conn()
+    cur = conn.cursor()
+    m = cur.execute("SELECT * FROM models WHERE id=?", (model_id,)).fetchone()
+    if not m:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Model not found")
+    for fname in os.listdir(UPLOAD_DIR):
+        if fname.startswith(model_id):
+            try:
+                os.remove(os.path.join(UPLOAD_DIR, fname))
+            except Exception:
+                pass
+    filename_str = file.filename or ".stl"
+    ext = os.path.splitext(filename_str)[-1] or ".stl"
+    filename = f"{model_id}{ext}"
+    path = os.path.join(UPLOAD_DIR, filename)
+    size = save_upload_file(file, path)
+    cur.execute(
+        "UPDATE models SET url=?, size=?, thumbnail=? WHERE id=?",
+        (f"/api/models/{model_id}/download", size, thumbnail, model_id),
+    )
+    conn.commit()
+    row = cur.execute("SELECT * FROM models WHERE id=?", (model_id,)).fetchone()
+    conn.close()
+    return row_to_model(row)
+
+
+@router.put("/api/models/{model_id}/thumbnail")
+def replace_model_thumbnail(model_id: str, file: UploadFile = File(...)):
+    filename_str = file.filename
+    ext = os.path.splitext(filename_str)[-1]
+    if not ext:
+        raise HTTPException(status_code=429, detail="File not Valid, Extension not found")
+    filebytes = file.file.read()
+    encoded_string = base64.b64encode(filebytes)
+    thumbnail = "data:image/" + ext[1:] + ";base64," + encoded_string.decode()
+    conn = get_db_conn()
+    cur = conn.cursor()
+    m = cur.execute("SELECT * FROM models WHERE id=?", (model_id,)).fetchone()
+    if not m:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Model not found")
+    cur.execute("UPDATE models SET thumbnail=? WHERE id=?", (thumbnail, model_id))
+    conn.commit()
+    row = cur.execute("SELECT * FROM models WHERE id=?", (model_id,)).fetchone()
+    conn.close()
+    return row_to_model(row)
+
+
+@router.get("/api/storage-stats")
+def storage_stats():
+    used = 0
+    for root, _dirs, files in os.walk(UPLOAD_DIR):
+        for fname in files:
+            used += os.path.getsize(os.path.join(root, fname))
+    return {"used": used, "total": 5 * 1024 * 1024 * 1024}
