@@ -16,6 +16,8 @@ import {
   AlertTriangle,
   ScreenShareIcon,
   BookOpen,
+  Link2,
+  XCircle,
 } from "lucide-react";
 
 import { generateThumbnail } from "../services/thumbnailGenerator";
@@ -399,6 +401,21 @@ const DetailPanel: React.FC<DetailPanelProps> = ({
 
         {/* Info Form */}
         <div className="space-y-4">
+          {model.storageMode === "reference" && (
+            <Chip
+              sx={{ borderRadius: 1 }}
+              icon={
+                model.missing ? (
+                  <XCircle className="w-3.5 h-3.5" />
+                ) : (
+                  <Link2 className="w-3.5 h-3.5" />
+                )
+              }
+              label={model.missing ? "Missing" : "Linked"}
+              color={model.missing ? "error" : "default"}
+              size="small"
+            />
+          )}
           <div>
             <Typography variant="h6" gutterBottom>
               Name
@@ -417,8 +434,10 @@ const DetailPanel: React.FC<DetailPanelProps> = ({
           </div>
 
           <Typography variant="body2" sx={{ color: "text.secondary" }}>
-            Filename: <br></br>
-            {model.id}.{model.name.split(".").pop()}
+            {model.storageMode === "reference" ? "Location:" : "Filename:"} <br></br>
+            {model.storageMode === "reference"
+              ? model.sourcePath ?? "Unknown location"
+              : `${model.id}.${model.name.split(".").pop()}`}
           </Typography>
           <Divider />
           <div>
@@ -815,25 +834,35 @@ const DetailPanel: React.FC<DetailPanelProps> = ({
                   sx={{ color: "text.secondary" }}
                   gutterBottom
                 >
-                  {model.id}.{model.name.split(".").pop()}
+                  {model.storageMode === "reference"
+                    ? model.sourcePath ?? "Unknown location"
+                    : `${model.id}.${model.name.split(".").pop()}`}
                 </Typography>
                 <div className="flex items-center gap-2 mb-4">
-                  <Button
-                    fullWidth
-                    disabled={isReplacing}
-                    component="label"
-                    variant="contained"
-                    startIcon={!isReplacing ? <FileUp /> : <RefreshCw />}
-                  >
-                    {isReplacing ? "Uploading..." : "Replace 3D Model File"}
-                    <input
-                      type="file"
-                      ref={fileInputRef}
-                      className="hidden"
-                      accept=".stl,.step,.stp,.3mf"
-                      onChange={handleReplaceFile}
-                    />
-                  </Button>
+                  {model.storageMode === "reference" ? (
+                    <Typography variant="caption" sx={{ color: "text.secondary" }}>
+                      This model references a file on disk — replacing its
+                      content isn't supported here. Delete it and re-add the
+                      file directly in its folder instead.
+                    </Typography>
+                  ) : (
+                    <Button
+                      fullWidth
+                      disabled={isReplacing}
+                      component="label"
+                      variant="contained"
+                      startIcon={!isReplacing ? <FileUp /> : <RefreshCw />}
+                    >
+                      {isReplacing ? "Uploading..." : "Replace 3D Model File"}
+                      <input
+                        type="file"
+                        ref={fileInputRef}
+                        className="hidden"
+                        accept=".stl,.step,.stp,.3mf"
+                        onChange={handleReplaceFile}
+                      />
+                    </Button>
+                  )}
                 </div>
 
                 <Typography variant="body1" gutterBottom>

@@ -8,7 +8,7 @@ from typing import Optional, List
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException
 from fastapi.responses import FileResponse
 
-from app.db import get_db_conn, row_to_model, save_upload_file, UPLOAD_DIR, MANUAL_DIR
+from app.db import get_db_conn, row_to_model, save_upload_file, now_ms, UPLOAD_DIR, MANUAL_DIR
 from app.services.ingestion import ingest_file
 
 router = APIRouter()
@@ -31,9 +31,9 @@ def get_models(folderId: Optional[str] = None):
     conn = get_db_conn()
     cur = conn.cursor()
     if folderId and folderId != "all":
-        cur.execute("SELECT * FROM models WHERE folderId=?", (folderId,))
+        cur.execute("SELECT * FROM models WHERE folderId=? AND removedAt IS NULL", (folderId,))
     else:
-        cur.execute("SELECT * FROM models")
+        cur.execute("SELECT * FROM models WHERE removedAt IS NULL")
     rows = cur.fetchall()
     conn.close()
     return [row_to_model(r) for r in rows]
@@ -98,6 +98,15 @@ def delete_model(model_id: str, deleteFile: bool = False):
     if not m:
         conn.close()
         raise HTTPException(status_code=404, detail="Model not found")
+    if m["storageMode"] == "reference" and not deleteFile:
+        # Tombstone instead of hard-delete: the real file is still sitting in its
+        # watch folder, and hard-deleting the row would make the next scan re-add
+        # it as a brand-new entry (new id, stripped of tags/description/manual).
+        # sourcePath stays intact so scan_watch_folder's dedup still recognizes it.
+        cur.execute("UPDATE models SET removedAt=? WHERE id=?", (now_ms(), model_id))
+        conn.commit()
+        conn.close()
+        return {"ok": True}
     for fname in os.listdir(UPLOAD_DIR):
         if fname.startswith(model_id):
             try:
@@ -152,6 +161,12 @@ def bulk_delete(payload: dict):
     conn = get_db_conn()
     cur = conn.cursor()
     for mid in ids:
+        row = cur.execute("SELECT storageMode FROM models WHERE id=?", (mid,)).fetchone()
+        if row and row["storageMode"] == "reference":
+            # Tombstone reference-mode models: sourcePath stays intact so a future
+            # watch-folder scan still recognizes the file as already ingested.
+            cur.execute("UPDATE models SET removedAt=? WHERE id=?", (now_ms(), mid))
+            continue
         for fname in os.listdir(UPLOAD_DIR):
             if fname.startswith(mid):
                 try:
@@ -214,6 +229,12 @@ def replace_model_file(model_id: str, file: UploadFile = File(...), thumbnail: O
     if not m:
         conn.close()
         raise HTTPException(status_code=404, detail="Model not found")
+    if m["storageMode"] == "reference":
+        conn.close()
+        raise HTTPException(
+            status_code=400,
+            detail="This model references a file on disk — replacing its content isn't supported here. Delete it and re-add the file directly in its folder instead.",
+        )
     for fname in os.listdir(UPLOAD_DIR):
         if fname.startswith(model_id):
             try:

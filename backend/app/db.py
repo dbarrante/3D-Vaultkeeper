@@ -67,6 +67,7 @@ def init_db() -> None:
         ("sliceSettings", "TEXT"),
         ("sourcePath", "TEXT"),
         ("storageMode", "TEXT NOT NULL DEFAULT 'copy'"),
+        ("removedAt", "INTEGER"),
     ]:
         try:
             cur.execute(f"ALTER TABLE models ADD COLUMN {column} {coltype}")

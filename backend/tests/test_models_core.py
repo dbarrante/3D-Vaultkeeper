@@ -127,6 +127,7 @@ def test_delete_reference_model_default_leaves_file_on_disk(client, tmp_path):
 
 def test_delete_reference_model_with_delete_file_true_removes_it(client, tmp_path):
     from app.services.ingestion import ingest_file
+    from app.db import get_db_conn
 
     source = tmp_path / "remove_me.stl"
     source.write_bytes(b"solid endsolid")
@@ -136,6 +137,12 @@ def test_delete_reference_model_with_delete_file_true_removes_it(client, tmp_pat
     assert response.status_code == 200
     assert not source.exists()
 
+    # deleteFile=True hard-deletes the row (no tombstone) — nothing left to re-detect.
+    conn = get_db_conn()
+    row = conn.execute("SELECT * FROM models WHERE id=?", (model["id"],)).fetchone()
+    conn.close()
+    assert row is None
+
 
 def test_delete_copy_mode_model_ignores_delete_file_param(client):
     created = _upload(client)
@@ -144,3 +151,93 @@ def test_delete_copy_mode_model_ignores_delete_file_param(client):
     assert response.status_code == 200
     listed = client.get("/api/models", params={"folderId": "1"}).json()
     assert all(m["id"] != created["id"] for m in listed)
+
+
+def test_delete_reference_model_default_tombstones_row_instead_of_hard_deleting(client, tmp_path):
+    from app.services.ingestion import ingest_file
+    from app.db import get_db_conn
+
+    source = tmp_path / "tombstone_me.stl"
+    source.write_bytes(b"solid endsolid")
+    model = ingest_file(str(source), folder_id="1", original_filename="tombstone_me.stl", reference_only=True)
+
+    response = client.delete(f"/api/models/{model['id']}")
+    assert response.status_code == 200
+
+    conn = get_db_conn()
+    row = conn.execute("SELECT removedAt, sourcePath FROM models WHERE id=?", (model["id"],)).fetchone()
+    conn.close()
+    assert row is not None  # row survives — tombstoned, not hard-deleted
+    assert row["removedAt"] is not None
+    assert row["sourcePath"] == str(source)
+
+
+def test_get_models_excludes_tombstoned_row_folder_filtered_and_unfiltered(client, tmp_path):
+    from app.services.ingestion import ingest_file
+
+    source = tmp_path / "excluded.stl"
+    source.write_bytes(b"solid endsolid")
+    model = ingest_file(str(source), folder_id="1", original_filename="excluded.stl", reference_only=True)
+
+    client.delete(f"/api/models/{model['id']}")
+
+    filtered = client.get("/api/models", params={"folderId": "1"}).json()
+    assert all(m["id"] != model["id"] for m in filtered)
+
+    unfiltered_all = client.get("/api/models", params={"folderId": "all"}).json()
+    assert all(m["id"] != model["id"] for m in unfiltered_all)
+
+    unfiltered_none = client.get("/api/models").json()
+    assert all(m["id"] != model["id"] for m in unfiltered_none)
+
+
+def test_tombstoned_reference_model_is_not_reingested_on_next_scan(client, tmp_path):
+    """The core regression the reviewer found: 'Remove from library' on a reference-mode
+    model used to hard-delete the row, so the next watch-folder scan would re-add the
+    still-present file as a brand-new entry. Tombstoning must prevent that."""
+    from app.services.ingestion import ingest_file
+    from app.services.scan import scan_watch_folder
+    from app.db import get_db_conn
+
+    watched_dir = tmp_path / "watched"
+    watched_dir.mkdir()
+    source = watched_dir / "keeper.stl"
+    source.write_bytes(b"solid keeper endsolid")
+
+    model = ingest_file(str(source), folder_id="1", original_filename="keeper.stl", reference_only=True)
+
+    response = client.delete(f"/api/models/{model['id']}")
+    assert response.status_code == 200
+
+    watch_row = {"id": "wf1", "path": str(watched_dir), "folderId": "1"}
+    rescanned_count = scan_watch_folder(watch_row)
+    assert rescanned_count == 0  # file must NOT be re-ingested as a new model
+
+    conn = get_db_conn()
+    matching_rows = conn.execute(
+        "SELECT id FROM models WHERE sourcePath=?", (str(source),)
+    ).fetchall()
+    conn.close()
+    assert len(matching_rows) == 1  # still just the original (tombstoned) row, no duplicate
+
+
+def test_replace_file_on_reference_model_returns_400_and_does_not_write(client, tmp_path):
+    from app.services.ingestion import ingest_file
+
+    source = tmp_path / "no_replace.stl"
+    source.write_bytes(b"solid original endsolid")
+    model = ingest_file(str(source), folder_id="1", original_filename="no_replace.stl", reference_only=True)
+
+    response = client.put(
+        f"/api/models/{model['id']}/file",
+        files={"file": ("replacement.stl", b"solid replacement endsolid", "application/octet-stream")},
+    )
+    assert response.status_code == 400
+    assert "references a file on disk" in response.json()["detail"]
+
+    # Content served on download is still the untouched original — nothing was written.
+    download = client.get(f"/api/models/{model['id']}/download")
+    assert download.content == b"solid original endsolid"
+
+    # Copy-mode behavior is unchanged (still 200, still replaces the file) —
+    # see test_replace_model_file_updates_size in test_models_bulk.py.

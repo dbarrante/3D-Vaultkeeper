@@ -36,6 +36,7 @@ export interface STLModel {
   sliceSettings?: string | null;
   storageMode?: "copy" | "reference";
   missing?: boolean;
+  sourcePath?: string | null;
 }
 
 export interface STLModelCollection {

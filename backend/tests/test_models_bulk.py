@@ -75,3 +75,40 @@ def test_bulk_delete_leaves_reference_mode_files_on_disk(client, tmp_path):
     assert source.exists()
     listed = client.get("/api/models", params={"folderId": "1"}).json()
     assert all(m["id"] != model["id"] for m in listed)
+
+
+def test_bulk_delete_mixed_batch_tombstones_reference_and_hard_deletes_copy(client, tmp_path):
+    from app.services.ingestion import ingest_file
+    from app.db import get_db_conn, UPLOAD_DIR
+    import os as _os
+
+    copy_model = _upload(client, "copy_gone.stl")
+
+    source = tmp_path / "ref_kept.stl"
+    source.write_bytes(b"solid endsolid")
+    ref_model = ingest_file(str(source), folder_id="1", original_filename="ref_kept.stl", reference_only=True)
+
+    response = client.post(
+        "/api/models/bulk-delete", json={"ids": [copy_model["id"], ref_model["id"]]}
+    )
+    assert response.status_code == 200
+
+    listed = client.get("/api/models", params={"folderId": "1"}).json()
+    listed_ids = {m["id"] for m in listed}
+    assert copy_model["id"] not in listed_ids
+    assert ref_model["id"] not in listed_ids
+
+    conn = get_db_conn()
+    ref_row = conn.execute("SELECT removedAt, sourcePath FROM models WHERE id=?", (ref_model["id"],)).fetchone()
+    copy_row = conn.execute("SELECT * FROM models WHERE id=?", (copy_model["id"],)).fetchone()
+    conn.close()
+
+    # reference-mode: row survives, tombstoned, sourcePath intact, real file untouched
+    assert ref_row is not None
+    assert ref_row["removedAt"] is not None
+    assert ref_row["sourcePath"] == str(source)
+    assert source.exists()
+
+    # copy-mode: row and file both gone
+    assert copy_row is None
+    assert not any(f.startswith(copy_model["id"]) for f in _os.listdir(UPLOAD_DIR))
