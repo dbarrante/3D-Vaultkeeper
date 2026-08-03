@@ -43,6 +43,10 @@ else:
     UPLOAD_DIR = Path(str(_frozen_dir / "uploads") if _frozen_dir else "./app/uploads")
 MANUAL_DIR = Path(os.getenv("MANUAL_STORAGE", UPLOAD_DIR / "manuals"))
 MANUAL_DIR.mkdir(parents=True, exist_ok=True)
+_db_path_parent = Path(DB_PATH).parent
+if _db_path_parent != Path("."):
+    _db_path_parent.mkdir(parents=True, exist_ok=True)
+UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 WEBUI_URL = os.getenv("WEBUI_URL", "http://localhost:8989")
 
 

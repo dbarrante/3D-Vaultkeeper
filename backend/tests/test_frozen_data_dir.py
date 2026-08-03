@@ -59,3 +59,23 @@ def test_env_override_wins_even_without_localappdata(monkeypatch, tmp_path):
 
     assert db.DB_PATH == custom_db
     assert db.UPLOAD_DIR == Path(custom_uploads)
+
+
+def test_frozen_data_dir_and_upload_dir_are_created(monkeypatch, tmp_path):
+    """DB_PATH's parent directory and UPLOAD_DIR must both exist after
+    import, even for a completely fresh LOCALAPPDATA that had nothing in
+    it beforehand — sqlite3.connect() does not create parent directories
+    itself, so relying on MANUAL_DIR's mkdir as an accidental side effect
+    is fragile (see db.py comment history)."""
+    monkeypatch.delenv("DB_PATH", raising=False)
+    monkeypatch.delenv("FILE_STORAGE", raising=False)
+    monkeypatch.delenv("MANUAL_STORAGE", raising=False)
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+
+    assert list(tmp_path.iterdir()) == []  # fresh LOCALAPPDATA, nothing pre-existing
+
+    db = _reimport_db()
+
+    assert Path(db.DB_PATH).parent.exists()
+    assert db.UPLOAD_DIR.exists()

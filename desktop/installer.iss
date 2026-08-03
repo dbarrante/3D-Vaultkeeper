@@ -1,4 +1,5 @@
 [Setup]
+AppId={{8F2E4A1C-9B3D-4E7A-A6C5-2D1F8E9B4C3A}
 AppName=3D Vaultkeeper
 AppVersion=0.1.0
 AppPublisher=3D Vaultkeeper
@@ -11,9 +12,13 @@ Compression=lzma2
 SolidCompression=yes
 ArchitecturesInstallIn64BitMode=x64
 
+[InstallDelete]
+Type: filesandordirs; Name: "{app}\_internal"
+
 [Files]
-Source: "dist\3D Vaultkeeper\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs
+Source: "dist\3D Vaultkeeper\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "..\THIRD-PARTY-LICENSES.md"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\LICENSE.md"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\3D Vaultkeeper"; Filename: "{app}\3D Vaultkeeper.exe"
