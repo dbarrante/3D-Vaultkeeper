@@ -102,7 +102,11 @@ def main():
     out_path = sys.argv[2] if len(sys.argv) > 2 else None
     text = "\n".join(lines) + "\n"
     if out_path:
-        with open(out_path, "w", encoding="utf-8") as f:
+        # newline="\n" pins LF output even on Windows (Python's default
+        # text-mode write would translate to CRLF here), matching
+        # THIRD-PARTY-LICENSES.md's own line endings so a paste-in never
+        # flips 340+ lines' endings for no reason.
+        with open(out_path, "w", encoding="utf-8", newline="\n") as f:
             f.write(text)
     else:
         sys.stdout.buffer.write(text.encode("utf-8"))
