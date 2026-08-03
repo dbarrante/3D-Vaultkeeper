@@ -59,6 +59,7 @@ bun.lock
 # PyInstaller build output for the desktop launcher — not source
 /desktop/dist/
 /desktop/build/
+/desktop/installer_output/
 
 # Real local dev database + the user's actual library files (currently
 # ~2000+ real files, 24GB+ once watched-folder references are added) —
