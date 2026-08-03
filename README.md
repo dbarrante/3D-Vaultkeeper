@@ -16,6 +16,8 @@
 
 > **Note:** This project is still in Beta. While the core functionality (importing, organizing, viewing) works, expect changes and improvements.
 
+> Originally based on [moddroid94/STLVault](https://github.com/moddroid94/STLVault) (MIT licensed).
+
 ---
 
 ## ✨ Features
