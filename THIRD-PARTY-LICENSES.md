@@ -38,10 +38,22 @@ document's stated preference for over-inclusion over under-inclusion,
 `serve` is left in rather than second-guessed out despite not shipping
 in the desktop product specifically.
 
-Each unique license type's full text is included once below the table,
-to avoid repeating identical boilerplate. Per-component copyright notices
-are listed with each license section, since preserving those — not just
-the license body text — is what MIT/BSD-style licenses actually require.
+Each unique license type's full text is included once below the table
+where a local, verified copy of that text exists, to avoid repeating
+identical boilerplate — the exceptions are certifi's MPL-2.0, SQLite's
+public-domain dedication, the Microsoft VC++ Redistributable terms, and
+zlib/libexpat/libmpdec/liblzma, none of which ship with a local
+canonical license file, so those are documented by name and canonical
+source URL instead (each says so explicitly in its own section). For
+the manually-curated MIT/BSD-3-Clause/Apache-2.0/ISC sections and the
+"Direct dependencies"/"Bundled Python runtime" tables, per-component
+copyright notices are listed alongside the shared license text, since
+preserving those — not just the license body text — is what MIT/BSD
+-style licenses actually require. The generated "Full frontend
+production dependency closure" table (~340 packages) does not repeat
+this per-package treatment at that scale — see that section's own note
+on why, and where to find each package's specific notice if one is
+ever needed.
 
 ## Direct dependencies
 
@@ -73,10 +85,19 @@ the license body text — is what MIT/BSD-style licenses actually require.
 
 ## Bundled Python runtime and native libraries
 
-These are not dependencies declared in `requirements.txt`/`package.json`
-— they're what PyInstaller's `--onedir` build actually packages alongside
-the code above so the installed app needs no separate Python/runtime
-install. Confirmed present via direct inspection of
+Mostly not dependencies declared in `backend/requirements.txt`/
+`frontend/package.json` — they're what PyInstaller's `--onedir` build
+actually packages alongside the code above so the installed app needs
+no separate Python/runtime install. The one exception is `pywebview`:
+it's a direct entry in `desktop/requirements.txt` (a third,
+packaging-only requirements file, distinct from the backend/frontend
+ones covered by "Direct dependencies" above) — included here rather
+than there since it's part of what makes this table's "bundled runtime"
+story complete, not a backend/frontend application dependency.
+`pyinstaller`, `desktop/requirements.txt`'s only other entry, is a
+build-time-only tool and ships in none of these tables, matching how
+`typescript`/`vite` are excluded from the frontend side. Every row
+below is confirmed present via direct inspection of
 `desktop/dist/3D Vaultkeeper/_internal/`.
 
 | Component | Version | License |
@@ -95,7 +116,7 @@ install. Confirmed present via direct inspection of
 | pywebview (webview) | 6.2.1 | BSD-3-Clause |
 | PyYAML | 6.0.3 | MIT |
 | libffi (libffi-8.dll) | bundled with CPython 3.13 | MIT |
-| OpenSSL (libssl-3.dll, libcrypto-3.dll) | bundled with CPython 3.13 | Apache-2.0 (see Apache License 2.0 section above) |
+| OpenSSL (libssl-3.dll, libcrypto-3.dll) | bundled with CPython 3.13 | Apache-2.0 (see Apache License 2.0 section below) |
 | Tcl/Tk (tcl86t.dll, tk86t.dll, and associated data files) | 8.6, bundled with CPython 3.13 | Tcl/Tk License (see dedicated section below) |
 | SQLite (sqlite3.dll) | bundled with CPython 3.13 | Public domain (see note below) |
 | Microsoft Visual C++ Redistributable components (VCRUNTIME140.dll, VCRUNTIME140_1.dll, ucrtbase.dll, and the api-ms-win-*.dll Universal CRT forwarder stubs) | bundled with CPython 3.13 | Microsoft redistribution terms (see note below) |
@@ -126,10 +147,10 @@ confirmed actually embedded in the shipped build via
 | python-dotenv | 1.2.2 | BSD-3-Clause |
 | h11 | 0.16.0 | MIT |
 | idna | 3.18 | BSD-3-Clause |
-| packaging | 26.2 | Apache-2.0 OR BSD-2-Clause (used here under the Apache-2.0 option — see Apache License 2.0 section above) |
+| packaging | 26.2 | Apache-2.0 OR BSD-2-Clause (used here under the Apache-2.0 option — see Apache License 2.0 section below) |
 | proxy_tools | 0.1.0 | MIT |
 | pycparser | 3.0 | BSD-3-Clause |
-| typing_extensions | 4.16.0 | PSF License Agreement (ships under the same license as CPython itself — see dedicated section above) |
+| typing_extensions | 4.16.0 | PSF License Agreement (ships under the same license as CPython itself — see dedicated section below) |
 | typing-inspection | 0.4.2 | MIT |
 | urllib3 | 2.7.0 | MIT |
 | pytest (partial: `_pytest`, `_pytest._version`, `_pytest.outcomes` only) | 9.1.1 | MIT |
