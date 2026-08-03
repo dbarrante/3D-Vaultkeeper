@@ -168,10 +168,10 @@ export const api = {
   },
 
   // 8. DELETE Model
-  deleteModel: async (id: string): Promise<void> => {
-    console.log("API: Deleting model", id);
+  deleteModel: async (id: string, deleteFile: boolean = false): Promise<void> => {
+    console.log("API: Deleting model", id, "deleteFile:", deleteFile);
 
-    const res = await fetch(`${getApiBaseUrl()}/models/${id}`, {
+    const res = await fetch(`${getApiBaseUrl()}/models/${id}?deleteFile=${deleteFile}`, {
       method: "DELETE",
     });
     if (!res.ok) throw new Error("Delete failed");

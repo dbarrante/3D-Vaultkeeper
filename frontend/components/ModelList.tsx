@@ -14,6 +14,7 @@ import {
   XCircle,
   ChevronLeft,
   BookOpen,
+  Link2,
 } from "lucide-react";
 import { STLModel, Folder } from "../types";
 import {
@@ -637,6 +638,23 @@ const ModelList: React.FC<ModelListProps> = ({
                           />
                         )}
                       </div>
+                      {model.storageMode === "reference" && (
+                        <div className="absolute top-2 left-2">
+                          <Chip
+                            sx={{ borderRadius: 1 }}
+                            icon={
+                              model.missing ? (
+                                <XCircle className="w-3.5 h-3.5" />
+                              ) : (
+                                <Link2 className="w-3.5 h-3.5" />
+                              )
+                            }
+                            label={model.missing ? "Missing" : "Linked"}
+                            color={model.missing ? "error" : "default"}
+                            size="small"
+                          />
+                        </div>
+                      )}
                       <div className="absolute top-2 right-2">
                         <Chip
                           sx={{

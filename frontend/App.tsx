@@ -443,13 +443,13 @@ const App = () => {
     setDeleteConfirmState({ isOpen: true, type: "bulk" });
   };
 
-  const executeDelete = async () => {
+  const executeDelete = async (deleteFile: boolean = false) => {
     const { type, id } = deleteConfirmState;
-    console.log(`Executing delete type: ${type}, id: ${id}`);
+    console.log(`Executing delete type: ${type}, id: ${id}, deleteFile: ${deleteFile}`);
 
     try {
       if (type === "single" && id) {
-        await api.deleteModel(id);
+        await api.deleteModel(id, deleteFile);
         setModels((prev) => prev.filter((m) => m.id !== id));
         if (selectedModelId === id) setSelectedModelId(null);
       } else if (type === "bulk") {
@@ -1180,7 +1180,11 @@ const App = () => {
                       </h3>
                       <p className="text-slate-400 text-sm">
                         {deleteConfirmState.type === "single" &&
-                          "Are you sure you want to delete this model? This action cannot be undone."}
+                        models.find((m) => m.id === deleteConfirmState.id)
+                          ?.storageMode === "reference"
+                          ? "This model references a file on disk rather than a copy stored by STLVault. Remove it from the library, or also delete the real file?"
+                          : deleteConfirmState.type === "single" &&
+                            "Are you sure you want to delete this model? This action cannot be undone."}
                         {deleteConfirmState.type === "bulk" &&
                           `Are you sure you want to delete ${selectedIds.size} models? This action cannot be undone.`}
                         {deleteConfirmState.type === "folder" &&
@@ -1188,25 +1192,55 @@ const App = () => {
                       </p>
                     </div>
 
-                    <div className="flex gap-3">
-                      <button
-                        onClick={() =>
-                          setDeleteConfirmState((prev) => ({
-                            ...prev,
-                            isOpen: false,
-                          }))
-                        }
-                        className="flex-1 py-2.5 rounded-lg bg-vault-700 hover:bg-vault-600 text-slate-200 font-medium transition-colors"
-                      >
-                        Cancel
-                      </button>
-                      <button
-                        onClick={executeDelete}
-                        className="flex-1 py-2.5 rounded-lg bg-red-600 hover:bg-red-500 text-white font-medium transition-colors"
-                      >
-                        Delete
-                      </button>
-                    </div>
+                    {deleteConfirmState.type === "single" &&
+                    models.find((m) => m.id === deleteConfirmState.id)
+                      ?.storageMode === "reference" ? (
+                      <div className="flex flex-col gap-3">
+                        <button
+                          onClick={() => executeDelete(false)}
+                          className="w-full py-2.5 rounded-lg bg-vault-700 hover:bg-vault-600 text-slate-200 font-medium transition-colors"
+                        >
+                          Remove from library
+                        </button>
+                        <button
+                          onClick={() => executeDelete(true)}
+                          className="w-full py-2.5 rounded-lg bg-red-600 hover:bg-red-500 text-white font-medium transition-colors"
+                        >
+                          Also delete file from disk
+                        </button>
+                        <button
+                          onClick={() =>
+                            setDeleteConfirmState((prev) => ({
+                              ...prev,
+                              isOpen: false,
+                            }))
+                          }
+                          className="w-full py-2 text-slate-400 hover:text-slate-200 text-sm transition-colors"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="flex gap-3">
+                        <button
+                          onClick={() =>
+                            setDeleteConfirmState((prev) => ({
+                              ...prev,
+                              isOpen: false,
+                            }))
+                          }
+                          className="flex-1 py-2.5 rounded-lg bg-vault-700 hover:bg-vault-600 text-slate-200 font-medium transition-colors"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          onClick={() => executeDelete(false)}
+                          className="flex-1 py-2.5 rounded-lg bg-red-600 hover:bg-red-500 text-white font-medium transition-colors"
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    )}
                   </div>
                 </div>
               )}

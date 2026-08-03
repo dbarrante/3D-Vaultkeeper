@@ -34,6 +34,8 @@ export interface STLModel {
   category?: string | null;
   colorCount?: number | null;
   sliceSettings?: string | null;
+  storageMode?: "copy" | "reference";
+  missing?: boolean;
 }
 
 export interface STLModelCollection {
