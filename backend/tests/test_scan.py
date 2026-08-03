@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 
@@ -148,3 +149,23 @@ def test_default_downloads_dir_is_under_home():
     from app.services.scan import default_downloads_dir
     from pathlib import Path
     assert default_downloads_dir() == Path.home() / "Downloads"
+
+
+def test_scan_watch_folder_references_instead_of_copying(client, tmp_path):
+    from app.services.scan import scan_watch_folder
+    from app.db import get_db_conn, UPLOAD_DIR
+
+    watched_dir = tmp_path / "watched"
+    watched_dir.mkdir()
+    (watched_dir / "a.stl").write_bytes(b"solid a endsolid")
+
+    row = {"id": "wf1", "path": str(watched_dir), "folderId": "1"}
+    ingested = scan_watch_folder(row)
+
+    assert ingested == 1
+    conn = get_db_conn()
+    model = conn.execute("SELECT storageMode, sourcePath, id FROM models WHERE folderId='1'").fetchone()
+    conn.close()
+    assert model["storageMode"] == "reference"
+    assert model["sourcePath"] == str(watched_dir / "a.stl")
+    assert not any(f.startswith(model["id"]) for f in os.listdir(UPLOAD_DIR))
