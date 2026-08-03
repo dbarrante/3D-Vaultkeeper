@@ -12,7 +12,18 @@ Push-Location "$repoRoot\desktop"
 & "$repoRoot\backend\.venv\Scripts\python.exe" -m PyInstaller launcher.spec --distpath dist --workpath build --noconfirm
 
 Write-Host "Compiling installer..."
-& iscc.exe installer.iss
+$iscc = Get-Command iscc.exe -ErrorAction SilentlyContinue
+if (-not $iscc) {
+    $fallback = "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe"
+    if (Test-Path $fallback) {
+        $iscc = $fallback
+    } else {
+        throw "iscc.exe not found on PATH or at the default winget install location ($fallback). Install Inno Setup: winget install JRSoftware.InnoSetup"
+    }
+} else {
+    $iscc = $iscc.Source
+}
+& $iscc installer.iss
 Pop-Location
 
 Write-Host "Done: desktop\installer_output\3DVaultkeeper-Setup.exe"
