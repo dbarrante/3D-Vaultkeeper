@@ -84,3 +84,28 @@ def test_copy_mode_model_never_reports_missing(client):
     found = next(m for m in listed if m["id"] == created["id"])
     assert found["storageMode"] == "copy"
     assert found["missing"] is False
+
+
+def test_download_reference_model_serves_from_source_path(client, tmp_path):
+    from app.services.ingestion import ingest_file
+
+    source = tmp_path / "download_me.stl"
+    source.write_bytes(b"solid reference content endsolid")
+    model = ingest_file(str(source), folder_id="1", original_filename="download_me.stl", reference_only=True)
+
+    response = client.get(f"/api/models/{model['id']}/download")
+    assert response.status_code == 200
+    assert response.content == b"solid reference content endsolid"
+
+
+def test_download_reference_model_returns_descriptive_404_when_missing(client, tmp_path):
+    from app.services.ingestion import ingest_file
+
+    source = tmp_path / "vanish.stl"
+    source.write_bytes(b"solid endsolid")
+    model = ingest_file(str(source), folder_id="1", original_filename="vanish.stl", reference_only=True)
+    os.remove(source)
+
+    response = client.get(f"/api/models/{model['id']}/download")
+    assert response.status_code == 404
+    assert "moved or deleted" in response.json()["detail"]

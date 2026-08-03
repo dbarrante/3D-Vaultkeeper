@@ -119,6 +119,18 @@ def delete_model(model_id: str):
 @router.get("/api/models/{model_id}/download")
 def download_model(model_id: str):
     m_info = get_model_info(model_id)
+    if m_info["storageMode"] == "reference":
+        source_path = m_info["sourcePath"]
+        if source_path and os.path.exists(source_path):
+            return FileResponse(
+                source_path,
+                media_type="application/octet-stream",
+                filename=m_info["name"],
+            )
+        raise HTTPException(
+            status_code=404,
+            detail=f"File not found at {source_path} — it may have been moved or deleted outside STLVault.",
+        )
     for fname in os.listdir(UPLOAD_DIR):
         if fname.startswith(model_id):
             return FileResponse(
