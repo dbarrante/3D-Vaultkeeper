@@ -1,4 +1,5 @@
 import os
+import sys
 import sqlite3
 import shutil
 import time
@@ -6,8 +7,28 @@ import json
 from pathlib import Path
 from typing import Optional, Dict, Any
 
-DB_PATH = os.getenv("DB_PATH", "data.db")
-UPLOAD_DIR = Path(os.getenv("FILE_STORAGE", "./app/uploads"))
+
+def _frozen_data_dir() -> Optional[Path]:
+    """Where DB_PATH/FILE_STORAGE default to when no env var override is
+    set and this is a packaged desktop build (sys.frozen, set by
+    PyInstaller). A normal dev checkout or Docker container is unaffected
+    — this only ever returns non-None in a frozen build. Program Files is
+    typically read-only for standard users, and a relative path is
+    unreliable when launched from a Start Menu shortcut, so the frozen
+    case gets a real per-user directory instead. LOCALAPPDATA rather than
+    the Roaming APPDATA: a 3D-print library can get large, and Roaming
+    profiles sync across machines in domain-joined environments, which a
+    multi-gigabyte uploads folder should never do.
+    """
+    if getattr(sys, "frozen", False):
+        return Path(os.environ["LOCALAPPDATA"]) / "3D Vaultkeeper"
+    return None
+
+
+_frozen_dir = _frozen_data_dir()
+
+DB_PATH = os.getenv("DB_PATH", str(_frozen_dir / "data.db") if _frozen_dir else "data.db")
+UPLOAD_DIR = Path(os.getenv("FILE_STORAGE", str(_frozen_dir / "uploads") if _frozen_dir else "./app/uploads"))
 MANUAL_DIR = Path(os.getenv("MANUAL_STORAGE", UPLOAD_DIR / "manuals"))
 MANUAL_DIR.mkdir(parents=True, exist_ok=True)
 WEBUI_URL = os.getenv("WEBUI_URL", "http://localhost:8989")
