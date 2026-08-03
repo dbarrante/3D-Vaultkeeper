@@ -51,3 +51,12 @@ bun.lock
 # app/uploads is FILE_STORAGE's local-dev fallback path (see app/db.py) when the
 # env var isn't set — NOT the app/ Python package itself, which is real source.
 /backend/app/uploads/
+
+# Control app runtime state (pidfiles, logs) — not source
+/control-app/.run/
+/control-app/launch.log
+
+# Real local dev database + the user's actual library files (currently
+# ~2000+ real files, 24GB+ once watched-folder references are added) —
+# never belongs in git regardless of where DB_PATH/FILE_STORAGE point.
+/dev-data/
