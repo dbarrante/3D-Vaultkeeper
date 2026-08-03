@@ -56,6 +56,10 @@ bun.lock
 /control-app/.run/
 /control-app/launch.log
 
+# PyInstaller build output for the desktop launcher — not source
+/desktop/dist/
+/desktop/build/
+
 # Real local dev database + the user's actual library files (currently
 # ~2000+ real files, 24GB+ once watched-folder references are added) —
 # never belongs in git regardless of where DB_PATH/FILE_STORAGE point.
