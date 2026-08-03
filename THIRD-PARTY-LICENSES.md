@@ -1,14 +1,21 @@
 # Third-Party Licenses
 
-3D Vaultkeeper is built on the open-source software listed below. This
-document covers everything actually present in the installed desktop
-product — the direct dependencies of the backend and frontend, plus the
-Python runtime and native libraries the PyInstaller build bundles
-alongside them. Test-only backend dependencies (pytest, httpx) and
-frontend build-time-only dependencies (typescript, vite,
+3D Vaultkeeper is built on the open-source software listed below: the
+direct dependencies of the backend and frontend, the Python runtime and
+native libraries the PyInstaller build bundles alongside them, and the
+transitive dependencies of both that were confirmed actually embedded in
+the shipped build (verified against `desktop/build/launcher/PYZ-00.toc`
+for the backend and the built `frontend_dist/assets/*.js` bundle for the
+frontend, not just a top-level directory listing, which understates what
+a PyInstaller/Vite build actually embeds). `httpx` (backend test-only)
+and frontend build-time-only dependencies (typescript, vite,
 @vitejs/plugin-react, @types/*) are excluded, since neither ships in the
 built product. `serve` (used only by the separate Docker frontend image,
-not the desktop installer) is likewise excluded from this list.
+not the desktop installer) is likewise excluded. `pytest` is *not*
+excluded — despite being a test dependency, a small part of it
+(`_pytest`, `_pytest._version`, `_pytest.outcomes`) is pulled into the
+shipped bundle by PyInstaller's dependency analysis, so it is documented
+below rather than assumed absent.
 
 Each unique license type's full text is included once below the table,
 to avoid repeating identical boilerplate. Per-component copyright notices
@@ -71,6 +78,53 @@ install. Confirmed present via direct inspection of
 | Tcl/Tk (tcl86t.dll, tk86t.dll, and associated data files) | 8.6, bundled with CPython 3.13 | Tcl/Tk License (see dedicated section below) |
 | SQLite (sqlite3.dll) | bundled with CPython 3.13 | Public domain (see note below) |
 | Microsoft Visual C++ Redistributable components (VCRUNTIME140.dll, VCRUNTIME140_1.dll, ucrtbase.dll, and the api-ms-win-*.dll Universal CRT forwarder stubs) | bundled with CPython 3.13 | Microsoft redistribution terms (see note below) |
+| zlib (zlib1.dll) | bundled with CPython 3.13 | zlib License (see note below) |
+| libexpat (via pyexpat.pyd) | bundled with CPython 3.13 | Expat/MIT License (see note below) |
+| libmpdec (via _decimal.pyd) | bundled with CPython 3.13 | BSD-2-Clause (see note below) |
+
+## Transitive dependencies (backend)
+
+Pulled in by direct dependencies above, not declared directly in
+`requirements.txt`, but confirmed actually embedded in the shipped build
+via `desktop/build/launcher/PYZ-00.toc`.
+
+| Component | Version | License |
+|---|---|---|
+| annotated-types | 0.8.0 | MIT |
+| anyio | 4.14.2 | MIT |
+| bottle | 0.13.4 | MIT |
+| cffi | 2.1.0 | MIT No Attribution (see dedicated section below) |
+| colorama | 0.4.6 | BSD-3-Clause |
+| python-dotenv | 1.2.2 | BSD-3-Clause |
+| h11 | 0.16.0 | MIT |
+| idna | 3.18 | BSD-3-Clause |
+| packaging | 26.2 | Apache-2.0 OR BSD-2-Clause (used here under the Apache-2.0 option — see Apache License 2.0 section above) |
+| proxy_tools | 0.1.0 | MIT |
+| pycparser | 3.0 | BSD-3-Clause |
+| typing_extensions | 4.16.0 | PSF License Agreement (ships under the same license as CPython itself — see dedicated section above) |
+| typing-inspection | 0.4.2 | MIT |
+| urllib3 | 2.7.0 | MIT |
+| pytest (partial: `_pytest`, `_pytest._version`, `_pytest.outcomes` only) | 9.1.1 | MIT |
+
+## Transitive dependencies (frontend)
+
+Pulled in by direct dependencies above, not declared directly in
+`package.json`, but confirmed actually embedded in the built
+`frontend_dist/assets/*.js` bundle by searching for each package's
+distinctive identifiers/version strings in the built output.
+
+| Component | Version | License |
+|---|---|---|
+| scheduler | 0.25.0 | MIT |
+| stylis | 4.2.0 | MIT |
+| micromark | 4.0.2 | MIT |
+| @popperjs/core | 2.11.8 | MIT |
+| unified | 11.0.5 | MIT |
+| clsx | 2.1.1 | MIT |
+| @babel/runtime | 7.29.7 | MIT |
+| property-information | 7.2.0 | MIT |
+| vfile | 6.0.3 | MIT |
+| mdast-util-to-hast | 13.2.1 | MIT |
 
 ## MIT License
 
@@ -100,7 +154,25 @@ not just the license body — be preserved in redistributed copies.
 - setuptools — no separate copyright notice in the distributed license file (Python Packaging Authority)
 - watchfiles — Copyright (c) 2017 to present Samuel Colvin
 - PyYAML — Copyright (c) 2017-2021 Ingy döt Net, Copyright (c) 2006-2016 Kirill Simonov
-- libffi — Copyright (c) 1996-2024 Anthony Green, Red Hat, Inc and others
+- libffi — Copyright (c) 1996-2022 Anthony Green, Red Hat, Inc and others
+- annotated-types — Copyright (c) 2022 the contributors
+- anyio — Copyright (c) 2018 Alex Grönholm
+- bottle — Copyright (c) 2009-2024, Marcel Hellkamp.
+- h11 — Copyright (c) 2016 Nathaniel J. Smith and other contributors
+- proxy_tools — no separate copyright notice found in local package metadata
+- typing-inspection — Copyright (c) Pydantic Services Inc. 2025 to present
+- urllib3 — Copyright (c) 2008-2020 Andrey Petrov and contributors.
+- pytest — Copyright (c) 2004 Holger Krekel and others
+- scheduler — Copyright (c) Meta Platforms, Inc. and affiliates. (part of the React project)
+- stylis — Copyright (c) 2016-present Sultan Tarimo
+- micromark — Copyright (c) Titus Wormer <tituswormer@gmail.com>
+- @popperjs/core — Copyright (c) 2019 Federico Zivolo
+- unified — Copyright (c) 2015 Titus Wormer <tituswormer@gmail.com>
+- clsx — Copyright (c) Luke Edwards
+- @babel/runtime — Copyright (c) 2014-present Sebastian McKenzie and other contributors
+- property-information — Copyright (c) Titus Wormer <tituswormer@gmail.com>
+- vfile — Copyright (c) 2015 Titus Wormer <tituswormer@gmail.com>
+- mdast-util-to-hast — Copyright (c) 2016 Titus Wormer <tituswormer@gmail.com>
 
 MIT License
 
@@ -138,6 +210,10 @@ differs between publishers.
 - click — Copyright 2014 Pallets
 - websockets — Copyright (c) Aymeric Augustin and contributors
 - pywebview — Copyright (c) 2014-2017, Roman Sirokov
+- colorama — Copyright (c) 2010 Jonathan Hartley, All rights reserved.
+- python-dotenv — Copyright (c) 2014, Saurabh Kumar (python-dotenv), 2013, Ted Tieken (django-dotenv-rw), 2013, Jacob Kaplan-Moss (django-dotenv)
+- idna — Copyright (c) 2013-2026, Kim Davies and contributors.
+- pycparser — Copyright (c) 2008-2022, Eli Bendersky
 
 Copyright © 2018, [Encode OSS Ltd](https://www.encode.io/).
 All rights reserved.
@@ -173,6 +249,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 - aiofiles — Tin Tvrtkovic
 - requests — Kenneth Reitz and contributors
 - OpenSSL (libssl-3.dll, libcrypto-3.dll) — The OpenSSL Project (OpenSSL 3.x is Apache-2.0 licensed; the older dual OpenSSL/SSLeay license applied only to 1.x releases)
+- packaging — the PyPA (dual-licensed Apache-2.0 OR BSD-2-Clause; used here under the Apache-2.0 option)
 
 
                                  Apache License
@@ -391,6 +468,41 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+## MIT No Attribution (cffi)
+
+`cffi` (pulled in transitively for native code interop) uses a variant
+of the MIT license called "MIT No Attribution" — functionally the same
+permissions as standard MIT, but without even the requirement to
+preserve the copyright/permission notice in copies. The text below is
+placeholder-marked and replaced with the real file content in the next
+step, to guarantee an exact verbatim match rather than a manual
+transcription.
+
+
+Except when otherwise stated (look for LICENSE files in directories or
+information at the beginning of each file) all software and
+documentation is licensed as follows: 
+
+    MIT No Attribution
+
+    Permission is hereby granted, free of charge, to any person 
+    obtaining a copy of this software and associated documentation 
+    files (the "Software"), to deal in the Software without 
+    restriction, including without limitation the rights to use, 
+    copy, modify, merge, publish, distribute, sublicense, and/or 
+    sell copies of the Software, and to permit persons to whom the 
+    Software is furnished to do so.
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS 
+    OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, 
+    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL 
+    THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER 
+    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING 
+    FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER 
+    DEALINGS IN THE SOFTWARE.
+
+
 
 ## PSF License Agreement (CPython)
 
@@ -1666,3 +1778,23 @@ Windows application that bundles this redistributable, and this
 document does not attempt to reproduce a EULA it does not have a
 local, canonical copy of. Full terms:
 https://learn.microsoft.com/en-us/cpp/windows/redistributing-visual-cpp-files
+
+## zlib, libexpat, and libmpdec
+
+Three more native libraries ship as part of the bundled Python runtime,
+via Python's `zlib`, `pyexpat`, and `_decimal` standard-library modules
+respectively — none of their full license texts are bundled locally with
+this Python installation (unlike everything else in this document, which
+is reproduced from an actual local file), so rather than fabricate text
+this document does not have a verified local source for, each is
+documented by name, license type, and its well-established canonical
+source instead:
+
+- **zlib** (zlib1.dll) — the zlib License, a short, permissive,
+  OSS-Initiative-approved license. Canonical text:
+  https://zlib.net/zlib_license.html
+- **libexpat** (used by pyexpat.pyd) — the Expat License (MIT-equivalent
+  terms). Canonical text:
+  https://github.com/libexpat/libexpat/blob/master/expat/COPYING
+- **libmpdec** (used by _decimal.pyd) — a 2-clause BSD license. Canonical
+  text: https://www.bytereef.org/mpdecimal/doc/libmpdec/index.html#license
