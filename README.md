@@ -177,13 +177,14 @@ frontend portion with `frontend/scripts/generate-license-report.py`
 whenever dependencies change (see the script's own docstring).
 
 **Known limitation:** the native folder-browse dialog (the "Browse"
-button when adding a watched folder) does not work correctly in the
-packaged desktop build — it launches a second full app instance instead
-of a plain file-picker dialog and times out after ~2 minutes. Works
-correctly in the normal (non-Docker) dev deployment; unavailable in the
-Docker deployment too, since the `python:3.9-slim` base image ships no
-tkinter (that one fails fast with a clean "unavailable" error instead of
-hanging). Type the folder path manually instead when running the
+button when adding a watched folder) is unavailable in the packaged
+desktop build — it returns a clean "unavailable, enter the path
+manually" error rather than opening a picker. (Earlier builds instead
+launched a second full app instance that hung or crashed; that's now
+detected and short-circuited to this clean error instead.) Works
+correctly in the normal (non-Docker) dev deployment; also unavailable in
+the Docker deployment, since the `python:3.9-slim` base image ships no
+tkinter. Type the folder path manually instead when running the
 packaged build or Docker. See the comment above `DIALOG_SCRIPT` in
 `backend/app/routers/watcher.py` for the technical reason.
 

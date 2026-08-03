@@ -394,7 +394,7 @@ const Sidebar: React.FC<SidebarProps> = ({
             <Box className="w-5 h-5 text-white pb-1" />
           </div>
           <Typography noWrap variant="h4">
-            STLVault
+            3D Vaultkeeper
           </Typography>
           <Typography
             noWrap

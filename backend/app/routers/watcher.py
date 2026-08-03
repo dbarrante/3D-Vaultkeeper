@@ -41,19 +41,23 @@ BROWSE_DIALOG_TIMEOUT_SECONDS = 120
 # `python -m uvicorn ...` launch — it just runs exactly the script given to
 # it, nothing else.
 #
-# KNOWN LIMITATION, not fixed here: this reasoning does NOT hold for the
-# packaged desktop build (see docs/superpowers/plans/2026-08-03-local-installer.md).
-# There, `sys.executable` is the frozen app's own .exe (PyInstaller), which
+# This reasoning does NOT hold for the packaged desktop build (see
+# docs/superpowers/plans/2026-08-03-local-installer.md). There,
+# `sys.executable` is the frozen app's own .exe (PyInstaller), which
 # ignores the `-c <script>` argument and re-launches the whole application
 # instead of a bare interpreter — the exact same class of bug as the
 # multiprocessing one above, just triggered a different way. In a packaged
-# build, clicking Browse spawns a second full app instance (its own server,
-# its own window, a second writer against the same SQLite DB) that never
-# emits the expected `OK:` response, so the request hangs for the full
-# BROWSE_DIALOG_TIMEOUT_SECONDS before failing. Confirmed live. Needs
-# frozen-build detection (`sys.frozen`) here to either skip straight to the
-# "unavailable" response or invoke a real bundled interpreter instead of
-# `sys.executable` — deliberately left unfixed pending that design decision.
+# build, clicking Browse used to spawn a second full app instance (its own
+# server, its own window, a second writer against the same SQLite DB) that
+# either hung for the full BROWSE_DIALOG_TIMEOUT_SECONDS or crashed fast
+# with "closed unexpectedly" depending on whether the second instance won
+# the race to bind a WebView2 user-data folder already held by the first.
+# Confirmed live, both ways. `run_folder_dialog_isolated` now checks
+# `sys.frozen` and skips straight to the "unavailable" response instead of
+# ever spawning that second instance — genuinely fixing the crash/hang, not
+# just describing it. No real fix for Browse itself in a frozen build
+# exists here (that would mean bundling a second, bare interpreter
+# entrypoint); this only stops the broken attempt.
 DIALOG_SCRIPT = """
 import sys
 try:
@@ -78,6 +82,11 @@ def run_folder_dialog_isolated(timeout_seconds: int = BROWSE_DIALOG_TIMEOUT_SECO
     contained to that one throwaway process and reported back as a clean
     HTTP error, never taking the real server down with it.
     """
+    if getattr(sys, "frozen", False):
+        raise HTTPException(
+            status_code=503,
+            detail="Folder browser is unavailable in the packaged desktop build — enter the path manually.",
+        )
     if not TKINTER_AVAILABLE:
         raise HTTPException(
             status_code=503,

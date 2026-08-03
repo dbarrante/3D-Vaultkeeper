@@ -1,5 +1,6 @@
 from unittest.mock import patch, MagicMock
 import subprocess
+import sys
 
 
 def _completed(stdout: str, returncode: int = 0) -> MagicMock:
@@ -83,6 +84,27 @@ def test_run_folder_dialog_isolated_does_not_reinvoke_uvicorn_entrypoint():
 
     assert "app.main" not in DIALOG_SCRIPT
     assert "uvicorn" not in DIALOG_SCRIPT
+
+
+def test_run_folder_dialog_isolated_returns_503_when_frozen():
+    """In a frozen PyInstaller build, sys.executable is the app's own .exe —
+    passing it "-c <script>" doesn't run a bare interpreter, it re-launches
+    the whole application (confirmed live: a second full app instance, its
+    own server and window, that either hangs or crashes). Detect the frozen
+    build and skip straight to "unavailable" instead of ever attempting
+    that broken subprocess call."""
+    from app.routers.watcher import run_folder_dialog_isolated
+    from fastapi import HTTPException
+
+    with patch.object(sys, "frozen", True, create=True):
+        with patch("app.routers.watcher.subprocess.run") as mock_run:
+            try:
+                run_folder_dialog_isolated()
+                assert False, "expected an HTTPException"
+            except HTTPException as exc:
+                assert exc.status_code == 503
+                assert "packaged desktop build" in exc.detail
+            mock_run.assert_not_called()
 
 
 def test_browse_folder_route_returns_isolated_result(client):
