@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import Sidebar from "./components/Sidebar";
 import ModelList from "./components/ModelList";
 import DetailPanel from "./components/DetailPanel";
@@ -87,25 +87,45 @@ const App = () => {
     mode: "view" | "edit";
   }>({ id: null, mode: "view" });
 
+  const fetchData = useCallback(async () => {
+    setIsLoading(true);
+    try {
+      const [fetchedFolders, fetchedModels, fetchedStats] = await Promise.all(
+        [api.getFolders(), api.getModels("all"), api.getStorageStats()],
+      );
+      setFolders(fetchedFolders);
+      setModels(fetchedModels);
+      setStorageStats(fetchedStats);
+    } catch (error) {
+      console.error("Failed to fetch data:", error);
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
   // Initial Data Fetch
   useEffect(() => {
-    const fetchData = async () => {
-      setIsLoading(true);
-      try {
-        const [fetchedFolders, fetchedModels, fetchedStats] = await Promise.all(
-          [api.getFolders(), api.getModels("all"), api.getStorageStats()],
-        );
-        setFolders(fetchedFolders);
-        setModels(fetchedModels);
-        setStorageStats(fetchedStats);
-      } catch (error) {
-        console.error("Failed to fetch initial data:", error);
-      } finally {
-        setIsLoading(false);
-      }
-    };
     fetchData();
-  }, []);
+  }, [fetchData]);
+
+  // Settings (WatcherInbox's "Add Watched Folder" / "+ New folder...") is
+  // where watch folders and their target library folders get created —
+  // it keeps its own separate folders/models fetch, entirely disconnected
+  // from this component's state. Without this, closing Settings by any
+  // path (the Back button, or clicking a folder in the sidebar while
+  // Settings is open) left the main page showing whatever snapshot it had
+  // at mount: a newly created folder, or files the scheduler had already
+  // scanned in, silently missing until a full page reload. Skips the
+  // initial mount (showSettings starts false) so it only fires on an
+  // actual open->close transition, not doubling the effect above.
+  const skipNextSettingsClose = useRef(true);
+  useEffect(() => {
+    if (skipNextSettingsClose.current) {
+      skipNextSettingsClose.current = false;
+      return;
+    }
+    if (!showSettings) fetchData();
+  }, [showSettings, fetchData]);
 
   // Refresh storage stats when models change (upload, delete, replace)
   useEffect(() => {
