@@ -66,6 +66,7 @@ def init_db() -> None:
         ("colorCount", "INTEGER"),
         ("sliceSettings", "TEXT"),
         ("sourcePath", "TEXT"),
+        ("storageMode", "TEXT NOT NULL DEFAULT 'copy'"),
     ]:
         try:
             cur.execute(f"ALTER TABLE models ADD COLUMN {column} {coltype}")
@@ -146,6 +147,7 @@ def row_to_model(row: sqlite3.Row) -> Dict[str, Any]:
         "colorCount": row["colorCount"] if "colorCount" in row.keys() else None,
         "sliceSettings": row["sliceSettings"] if "sliceSettings" in row.keys() else None,
         "sourcePath": row["sourcePath"] if "sourcePath" in row.keys() else None,
+        "storageMode": row["storageMode"] if "storageMode" in row.keys() else "copy",
     }
 
 
