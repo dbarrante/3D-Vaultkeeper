@@ -102,6 +102,21 @@ clicking Browse in the installed app opens the picker and returns the
 selected path correctly — the feature genuinely works end to end, not
 just at the mechanism level.
 
+**Folder/model list not refreshing after Settings (2026-08-03, commit
+`8693511`):** user reported that creating a new library folder and a
+watch folder via the Watcher panel, then closing Settings, showed
+neither the new folder nor any of the files it scanned in. Root cause:
+`App.tsx` fetched folders/models/stats exactly once, in a mount-only
+effect; `WatcherInbox` (rendered inside Settings) keeps its own,
+entirely separate folders fetch for its own form, so creating a folder
+or watch folder there never touched `App.tsx`'s state. Fixed by
+extracting the fetch into a reusable `fetchData()` and refetching on
+every `showSettings` true→false transition, covering every way Settings
+can close (the Back button, or clicking a folder in the sidebar while
+Settings is open). Pre-existing bug, unrelated to any of this plan's
+own changes — just surfaced by exercising the real workflow live.
+**User-confirmed live:** works now.
+
 ---
 
 ### Task 1: Frozen-aware data directory defaults
