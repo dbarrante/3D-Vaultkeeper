@@ -34,15 +34,26 @@ SPECIAL_CASES = {
 }
 
 
-def resolve_license(raw: str) -> str:
+def resolve_license(pkg_at_version: str, raw: str) -> str:
     raw = raw.strip()
+    if raw == "UNKNOWN" or not raw:
+        print(f"WARNING: {pkg_at_version} has no detectable license ({raw!r}) — "
+              f"resolve this manually before shipping the generated table", file=sys.stderr)
+        return raw
     if raw.startswith("(") and raw.endswith(")"):
         raw = raw[1:-1]
+    if " AND " in raw:
+        print(f"WARNING: {pkg_at_version} has an AND-expression license ({raw!r}) not in "
+              f"SPECIAL_CASES — both terms apply simultaneously and this needs a manual "
+              f"decision, not the OR-preference resolver", file=sys.stderr)
+        return raw
     if " OR " in raw:
         options = [o.strip() for o in raw.split(" OR ")]
         for pref in OR_PREFERENCE:
             if pref in options:
                 return f"{pref} (dual/multi-licensed: {raw} — used under the {pref} option)"
+        print(f"WARNING: {pkg_at_version} offers only licenses this document has no "
+              f"preference for ({raw!r}) — add one to OR_PREFERENCE or handle manually", file=sys.stderr)
         return raw
     if raw.endswith("*"):
         return f"{raw[:-1]} (license-checker inferred this from package metadata rather than an explicit license field)"
@@ -62,11 +73,15 @@ def main():
         name, _, version = pkg_at_version.rpartition("@")
         if name in ("stlvault", ""):
             continue  # the project's own root package.json entry, not a real dependency
-        base_name = name.split("/")[-1] if not name.startswith("@") else name.split("/")[0]
-        if base_name in SPECIAL_CASES or name in SPECIAL_CASES:
-            license_display = SPECIAL_CASES.get(name, SPECIAL_CASES.get(base_name))
+        # SPECIAL_CASES keys are always the full package name (including any
+        # @scope/ prefix) — no separate "base name" extraction, since that
+        # previously took the scope instead of the name for scoped packages
+        # (e.g. "@emotion/react" -> "@emotion", not "react") and would have
+        # silently matched the wrong package for any future scoped special case.
+        if name in SPECIAL_CASES:
+            license_display = SPECIAL_CASES[name]
         else:
-            license_display = resolve_license(info.get("licenses", "UNKNOWN"))
+            license_display = resolve_license(pkg_at_version, info.get("licenses", "UNKNOWN"))
         rows.append((name, version, license_display))
 
     rows.sort(key=lambda r: r[0].lower())
