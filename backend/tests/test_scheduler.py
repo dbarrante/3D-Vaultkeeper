@@ -24,6 +24,53 @@ def test_should_run_now_false_when_disabled():
     assert should_run_now(row, now_ms_value=1_000_000) is False
 
 
+def test_scheduler_loop_does_not_block_the_event_loop(monkeypatch):
+    """Confirmed live: a watched folder pointed at a 24GB Dropbox-synced
+    directory made scheduler_tick() take many minutes (Dropbox has to
+    download each file on first read). Since _scheduler_loop called it
+    directly on the main event loop, that froze the entire process —
+    uvicorn never got past 'Waiting for application startup', so the
+    server never started accepting connections at all. Ticks must run off
+    the event loop thread so a slow scan only stalls scanning, not the
+    whole app."""
+    import asyncio
+    import time
+
+    from app import scheduler
+
+    def slow_tick():
+        time.sleep(0.2)
+        return {}
+
+    monkeypatch.setattr(scheduler, "scheduler_tick", slow_tick)
+
+    async def run():
+        tick_counter = {"n": 0}
+
+        async def heartbeat():
+            while True:
+                tick_counter["n"] += 1
+                await asyncio.sleep(0.02)
+
+        loop_task = asyncio.create_task(scheduler._scheduler_loop())
+        heartbeat_task = asyncio.create_task(heartbeat())
+
+        await asyncio.sleep(0.3)
+
+        loop_task.cancel()
+        heartbeat_task.cancel()
+        for t in (loop_task, heartbeat_task):
+            try:
+                await t
+            except asyncio.CancelledError:
+                pass
+        return tick_counter["n"]
+
+    # If slow_tick() blocks the event loop, the heartbeat is starved for the
+    # ~0.2s it runs and can't reach 5 ticks in the 0.3s window.
+    assert asyncio.run(run()) >= 5
+
+
 def test_scheduler_tick_scans_due_folders_and_downloads(client, tmp_path, monkeypatch):
     from app.scheduler import scheduler_tick
     from app.db import get_db_conn

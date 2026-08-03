@@ -46,7 +46,15 @@ def scheduler_tick() -> dict:
 async def _scheduler_loop():
     while True:
         try:
-            scheduler_tick()
+            # scheduler_tick() is synchronous, blocking file I/O (os.walk +
+            # reading file contents). Confirmed live: a watch folder pointed
+            # at a Dropbox-synced directory made a single tick take many
+            # minutes, since Dropbox has to download each file's content on
+            # first read — and because this used to run directly on the
+            # event loop, that froze the entire process, including uvicorn's
+            # own startup, for the whole scan. to_thread keeps a slow scan
+            # from blocking anything else the server needs to do.
+            await asyncio.to_thread(scheduler_tick)
         except Exception:
             pass  # one bad tick must never kill the loop
         await asyncio.sleep(TICK_SECONDS)
