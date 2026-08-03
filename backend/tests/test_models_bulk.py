@@ -61,3 +61,17 @@ def test_storage_stats_reports_used_bytes(client):
     body = response.json()
     assert body["used"] > 0
     assert body["total"] == 5 * 1024 * 1024 * 1024
+
+
+def test_bulk_delete_leaves_reference_mode_files_on_disk(client, tmp_path):
+    from app.services.ingestion import ingest_file
+
+    source = tmp_path / "bulk_keep.stl"
+    source.write_bytes(b"solid endsolid")
+    model = ingest_file(str(source), folder_id="1", original_filename="bulk_keep.stl", reference_only=True)
+
+    response = client.post("/api/models/bulk-delete", json={"ids": [model["id"]]})
+    assert response.status_code == 200
+    assert source.exists()
+    listed = client.get("/api/models", params={"folderId": "1"}).json()
+    assert all(m["id"] != model["id"] for m in listed)
