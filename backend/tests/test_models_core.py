@@ -109,3 +109,38 @@ def test_download_reference_model_returns_descriptive_404_when_missing(client, t
     response = client.get(f"/api/models/{model['id']}/download")
     assert response.status_code == 404
     assert "moved or deleted" in response.json()["detail"]
+
+
+def test_delete_reference_model_default_leaves_file_on_disk(client, tmp_path):
+    from app.services.ingestion import ingest_file
+
+    source = tmp_path / "keep.stl"
+    source.write_bytes(b"solid endsolid")
+    model = ingest_file(str(source), folder_id="1", original_filename="keep.stl", reference_only=True)
+
+    response = client.delete(f"/api/models/{model['id']}")
+    assert response.status_code == 200
+    assert source.exists()
+    listed = client.get("/api/models", params={"folderId": "1"}).json()
+    assert all(m["id"] != model["id"] for m in listed)
+
+
+def test_delete_reference_model_with_delete_file_true_removes_it(client, tmp_path):
+    from app.services.ingestion import ingest_file
+
+    source = tmp_path / "remove_me.stl"
+    source.write_bytes(b"solid endsolid")
+    model = ingest_file(str(source), folder_id="1", original_filename="remove_me.stl", reference_only=True)
+
+    response = client.delete(f"/api/models/{model['id']}", params={"deleteFile": "true"})
+    assert response.status_code == 200
+    assert not source.exists()
+
+
+def test_delete_copy_mode_model_ignores_delete_file_param(client):
+    created = _upload(client)
+
+    response = client.delete(f"/api/models/{created['id']}", params={"deleteFile": "false"})
+    assert response.status_code == 200
+    listed = client.get("/api/models", params={"folderId": "1"}).json()
+    assert all(m["id"] != created["id"] for m in listed)

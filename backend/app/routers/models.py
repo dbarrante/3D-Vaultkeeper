@@ -91,7 +91,7 @@ def update_model(model_id: str, updates: dict):
 
 
 @router.delete("/api/models/{model_id}")
-def delete_model(model_id: str):
+def delete_model(model_id: str, deleteFile: bool = False):
     conn = get_db_conn()
     cur = conn.cursor()
     m = cur.execute("SELECT * FROM models WHERE id=?", (model_id,)).fetchone()
@@ -104,6 +104,11 @@ def delete_model(model_id: str):
                 os.remove(os.path.join(UPLOAD_DIR, fname))
             except Exception:
                 pass
+    if m["storageMode"] == "reference" and deleteFile and m["sourcePath"]:
+        try:
+            os.remove(m["sourcePath"])
+        except OSError:
+            pass
     manual_path = MANUAL_DIR / f"{model_id}.md"
     if manual_path.exists():
         try:
