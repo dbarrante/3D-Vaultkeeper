@@ -7,6 +7,21 @@ import {
   InboxItem,
 } from "../types";
 
+// The Docker image bakes VITE_API_URL as the literal placeholder token
+// "TERA_API_URL" (see frontend/vite.config.ts) and relies on env.sh
+// sed-replacing it with a real URL at container start. The desktop
+// PyInstaller build (desktop/build.ps1) runs a plain `bun run build` with
+// no such substitution step, so that placeholder ships unreplaced —
+// every fetch resolved to a bogus relative path like "/TERA_API_URL/api/...",
+// which fell through app/main.py's catch-all StaticFiles mount and came
+// back "Method Not Allowed" for any POST (StaticFiles only serves GET/HEAD).
+// The desktop launcher always serves the frontend and API from the same
+// origin on one dynamically-chosen port, so treating this exact unreplaced
+// placeholder as "use the page's own origin" is always correct there —
+// unlike a genuinely empty VITE_API_URL (Docker env var never set), which
+// must keep surfacing as the "API Host Not Set" error (see App.tsx).
+const UNSUBSTITUTED_PLACEHOLDER = "TERA_API_URL";
+
 // Resolved fresh on every call, not cached at module-load time. The
 // localStorage override (set via Settings -> API Host) is meant to let you
 // point the app at a different backend without rebuilding — but a plain
@@ -17,10 +32,16 @@ import {
 // Folder" stayed disabled and inbox/watch-folder requests came back as
 // "Unexpected token '<', <!DOCTYPE" — they were hitting the Vite dev server's
 // own SPA-fallback HTML instead of the real backend.
-function getApiBaseUrl(): string {
+export function resolveApiOrigin(): string {
   const override = localStorage.getItem("api-port-override");
-  if (override) return override + "/api";
-  return import.meta.env.VITE_API_URL + "/api";
+  if (override) return override;
+  const configured = import.meta.env.VITE_API_URL;
+  if (configured === UNSUBSTITUTED_PLACEHOLDER) return window.location.origin;
+  return configured;
+}
+
+function getApiBaseUrl(): string {
+  return resolveApiOrigin() + "/api";
 }
 
 // --- API SERVICE ---

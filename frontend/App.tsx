@@ -7,7 +7,7 @@ import Navbar from "./components/Navbar";
 import ManualModal from "./components/ManualModal";
 import { STLModel, Folder, StorageStats, STLModelCollection } from "./types";
 import { generateThumbnail } from "./services/thumbnailGenerator";
-import { api } from "./services/api";
+import { api, resolveApiOrigin } from "./services/api";
 import {
   FolderInput,
   Tags,
@@ -74,7 +74,7 @@ const App = () => {
   );
   const [importUrl, setImportUrl] = useState("");
   const [importFolderId, setImportFolderId] = useState("");
-  const port = import.meta.env.VITE_API_URL;
+  const port = resolveApiOrigin();
   // Delete Confirmation State
   const [deleteConfirmState, setDeleteConfirmState] = useState<{
     isOpen: boolean;

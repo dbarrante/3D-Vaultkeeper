@@ -30,14 +30,7 @@ import {
 import * as THREE from "three";
 import { LoadStep } from "./STEPLoader";
 import Button from "@mui/material/Button";
-
-// Resolved fresh on every call — see services/api.ts's getApiBaseUrl() for why
-// this can't be a module-level constant computed once at import time.
-function getApiBaseUrl(): string {
-  const override = localStorage.getItem("api-port-override");
-  if (override) return override;
-  return import.meta.env.VITE_API_URL;
-}
+import { resolveApiOrigin as getApiBaseUrl } from "../services/api";
 
 // Defined before usage to ensure proper type resolution
 interface ErrorBoundaryProps {

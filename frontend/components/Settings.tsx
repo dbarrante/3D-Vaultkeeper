@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import {
   api,
+  resolveApiOrigin,
   ALL_SLICER_TYPES,
   getEnabledLaunchSlicers,
   setEnabledLaunchSlicers,
@@ -51,7 +52,7 @@ const Settings: React.FC<SettingsProps> = ({ onBack }) => {
   });
 
   const [selectedApiPort, setSelectedApiPort] = useState<string>(() => {
-    const envport = import.meta.env.VITE_API_URL;
+    const envport = resolveApiOrigin();
     const port = localStorage.getItem("api-port-override");
     if (port) {
       setApiPortStatus(true);
