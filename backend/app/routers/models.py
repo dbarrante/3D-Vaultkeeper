@@ -192,6 +192,10 @@ def bulk_move(payload: dict):
     conn = get_db_conn()
     cur = conn.cursor()
     for mid in ids:
+        # Skip tombstoned (removed) models — they're hidden from the UI and should not be acted upon
+        row = cur.execute("SELECT removedAt FROM models WHERE id=?", (mid,)).fetchone()
+        if row and row["removedAt"] is not None:
+            continue
         cur.execute("UPDATE models SET folderId=? WHERE id=?", (folderId, mid))
     conn.commit()
     conn.close()
@@ -205,8 +209,11 @@ def bulk_tag(payload: dict):
     conn = get_db_conn()
     cur = conn.cursor()
     for mid in ids:
-        row = cur.execute("SELECT tags FROM models WHERE id=?", (mid,)).fetchone()
+        row = cur.execute("SELECT tags, removedAt FROM models WHERE id=?", (mid,)).fetchone()
         if not row:
+            continue
+        # Skip tombstoned (removed) models — they're hidden from the UI and should not be acted upon
+        if row["removedAt"] is not None:
             continue
         existing = []
         if row["tags"]:

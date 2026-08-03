@@ -112,3 +112,72 @@ def test_bulk_delete_mixed_batch_tombstones_reference_and_hard_deletes_copy(clie
     # copy-mode: row and file both gone
     assert copy_row is None
     assert not any(f.startswith(copy_model["id"]) for f in _os.listdir(UPLOAD_DIR))
+
+
+def test_bulk_move_skips_tombstoned_models(client, tmp_path):
+    from app.services.ingestion import ingest_file
+    from app.db import get_db_conn
+
+    # Create two models: one active, one tombstoned reference
+    active_model = _upload(client, "active.stl")
+
+    source = tmp_path / "tombstoned.stl"
+    source.write_bytes(b"solid endsolid")
+    tombstoned_model = ingest_file(str(source), folder_id="1", original_filename="tombstoned.stl", reference_only=True)
+
+    # Tombstone the reference-mode model
+    client.delete(f"/api/models/{tombstoned_model['id']}")
+
+    # Create destination folder
+    dest_folder = client.post("/api/folders", json={"name": "Dest", "parentId": None}).json()
+
+    # Bulk move both models
+    response = client.post(
+        "/api/models/bulk-move",
+        json={"ids": [active_model["id"], tombstoned_model["id"]], "folderId": dest_folder["id"]}
+    )
+    assert response.status_code == 200
+
+    # Verify: active model moved to dest, tombstoned model's folderId unchanged
+    conn = get_db_conn()
+    active_row = conn.execute("SELECT folderId FROM models WHERE id=?", (active_model["id"],)).fetchone()
+    tombstoned_row = conn.execute("SELECT folderId FROM models WHERE id=?", (tombstoned_model["id"],)).fetchone()
+    conn.close()
+
+    assert active_row["folderId"] == dest_folder["id"]
+    assert tombstoned_row["folderId"] == "1"  # Unchanged
+
+
+def test_bulk_tag_skips_tombstoned_models(client, tmp_path):
+    from app.services.ingestion import ingest_file
+    from app.db import get_db_conn
+
+    # Create two models: one active, one tombstoned reference
+    active_model = _upload(client, "active.stl")
+
+    source = tmp_path / "tombstoned.stl"
+    source.write_bytes(b"solid endsolid")
+    tombstoned_model = ingest_file(str(source), folder_id="1", original_filename="tombstoned.stl", reference_only=True)
+
+    # Tombstone the reference-mode model
+    client.delete(f"/api/models/{tombstoned_model['id']}")
+
+    # Bulk tag both models
+    response = client.post(
+        "/api/models/bulk-tag",
+        json={"ids": [active_model["id"], tombstoned_model["id"]], "tags": ["new-tag"]}
+    )
+    assert response.status_code == 200
+
+    # Verify: active model got the tag, tombstoned model's tags unchanged
+    conn = get_db_conn()
+    import json
+    active_row = conn.execute("SELECT tags FROM models WHERE id=?", (active_model["id"],)).fetchone()
+    tombstoned_row = conn.execute("SELECT tags FROM models WHERE id=?", (tombstoned_model["id"],)).fetchone()
+    conn.close()
+
+    active_tags = json.loads(active_row["tags"]) if active_row["tags"] else []
+    tombstoned_tags = json.loads(tombstoned_row["tags"]) if tombstoned_row["tags"] else []
+
+    assert "new-tag" in active_tags
+    assert "new-tag" not in tombstoned_tags

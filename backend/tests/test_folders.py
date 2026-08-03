@@ -41,3 +41,29 @@ def test_delete_folder_with_models_is_rejected(client):
     )
     response = client.delete(f"/api/folders/{folder['id']}")
     assert response.status_code == 400
+
+
+def test_delete_folder_with_only_tombstoned_models_succeeds(client, tmp_path):
+    from app.services.ingestion import ingest_file
+
+    folder = client.post("/api/folders", json={"name": "OnlyTombstoned", "parentId": None}).json()
+    source = tmp_path / "ref_model.stl"
+    source.write_bytes(b"solid endsolid")
+    model = ingest_file(str(source), folder_id=folder["id"], original_filename="ref_model.stl", reference_only=True)
+
+    # Verify the model is in the folder
+    listed = client.get("/api/models", params={"folderId": folder["id"]}).json()
+    assert any(m["id"] == model["id"] for m in listed)
+
+    # Delete the model (should tombstone it, not hard-delete)
+    response = client.delete(f"/api/models/{model['id']}")
+    assert response.status_code == 200
+
+    # Verify the model is no longer listed
+    listed = client.get("/api/models", params={"folderId": folder["id"]}).json()
+    assert not any(m["id"] == model["id"] for m in listed)
+
+    # Verify the folder can now be deleted (previously would have returned 400)
+    response = client.delete(f"/api/folders/{folder['id']}")
+    assert response.status_code == 200
+    assert response.json() == {"ok": True}

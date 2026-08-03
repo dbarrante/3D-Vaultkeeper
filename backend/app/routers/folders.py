@@ -57,7 +57,7 @@ def update_folder(folder_id: str, item: FolderData):
 def delete_folder(folder_id: str):
     conn = get_db_conn()
     cur = conn.cursor()
-    cur.execute("SELECT 1 FROM models WHERE folderId=? LIMIT 1", (folder_id,))
+    cur.execute("SELECT 1 FROM models WHERE folderId=? AND removedAt IS NULL LIMIT 1", (folder_id,))
     if cur.fetchone():
         conn.close()
         raise HTTPException(status_code=400, detail="Folder must be empty to delete")
