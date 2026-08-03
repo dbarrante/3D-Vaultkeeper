@@ -45,3 +45,17 @@ def test_env_override_wins_even_when_frozen(monkeypatch, tmp_path):
 
     assert db.DB_PATH == custom_db
     assert db.UPLOAD_DIR == Path(custom_uploads)
+
+
+def test_env_override_wins_even_without_localappdata(monkeypatch, tmp_path):
+    custom_db = str(tmp_path / "custom.db")
+    custom_uploads = str(tmp_path / "custom_uploads")
+    monkeypatch.setenv("DB_PATH", custom_db)
+    monkeypatch.setenv("FILE_STORAGE", custom_uploads)
+    monkeypatch.delenv("LOCALAPPDATA", raising=False)  # LOCALAPPDATA is NOT set
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+
+    db = _reimport_db()
+
+    assert db.DB_PATH == custom_db
+    assert db.UPLOAD_DIR == Path(custom_uploads)

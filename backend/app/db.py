@@ -21,14 +21,26 @@ def _frozen_data_dir() -> Optional[Path]:
     multi-gigabyte uploads folder should never do.
     """
     if getattr(sys, "frozen", False):
-        return Path(os.environ["LOCALAPPDATA"]) / "3D Vaultkeeper"
+        localappdata = os.environ.get("LOCALAPPDATA")
+        if localappdata:
+            return Path(localappdata) / "3D Vaultkeeper"
     return None
 
 
-_frozen_dir = _frozen_data_dir()
+# Only compute _frozen_dir if we need it for a default (when env override is absent)
+_db_path_override = os.getenv("DB_PATH")
+if _db_path_override is not None:
+    DB_PATH = _db_path_override
+else:
+    _frozen_dir = _frozen_data_dir()
+    DB_PATH = str(_frozen_dir / "data.db") if _frozen_dir else "data.db"
 
-DB_PATH = os.getenv("DB_PATH", str(_frozen_dir / "data.db") if _frozen_dir else "data.db")
-UPLOAD_DIR = Path(os.getenv("FILE_STORAGE", str(_frozen_dir / "uploads") if _frozen_dir else "./app/uploads"))
+_file_storage_override = os.getenv("FILE_STORAGE")
+if _file_storage_override is not None:
+    UPLOAD_DIR = Path(_file_storage_override)
+else:
+    _frozen_dir = _frozen_data_dir()
+    UPLOAD_DIR = Path(str(_frozen_dir / "uploads") if _frozen_dir else "./app/uploads")
 MANUAL_DIR = Path(os.getenv("MANUAL_STORAGE", UPLOAD_DIR / "manuals"))
 MANUAL_DIR.mkdir(parents=True, exist_ok=True)
 WEBUI_URL = os.getenv("WEBUI_URL", "http://localhost:8989")
