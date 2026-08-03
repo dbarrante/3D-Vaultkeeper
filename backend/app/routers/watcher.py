@@ -46,18 +46,22 @@ BROWSE_DIALOG_TIMEOUT_SECONDS = 120
 # `sys.executable` is the frozen app's own .exe (PyInstaller), which
 # ignores the `-c <script>` argument and re-launches the whole application
 # instead of a bare interpreter — the exact same class of bug as the
-# multiprocessing one above, just triggered a different way. In a packaged
-# build, clicking Browse used to spawn a second full app instance (its own
-# server, its own window, a second writer against the same SQLite DB) that
-# either hung for the full BROWSE_DIALOG_TIMEOUT_SECONDS or crashed fast
-# with "closed unexpectedly" depending on whether the second instance won
-# the race to bind a WebView2 user-data folder already held by the first.
-# Confirmed live, both ways. `run_folder_dialog_isolated` now checks
-# `sys.frozen` and skips straight to the "unavailable" response instead of
-# ever spawning that second instance — genuinely fixing the crash/hang, not
-# just describing it. No real fix for Browse itself in a frozen build
-# exists here (that would mean bundling a second, bare interpreter
-# entrypoint); this only stops the broken attempt.
+# multiprocessing one above, just triggered a different way, and it used
+# to spawn a second full app instance (its own server, its own window, a
+# second writer against the same SQLite DB) that either hung for the full
+# BROWSE_DIALOG_TIMEOUT_SECONDS or crashed fast with "closed unexpectedly"
+# depending on whether it won the race to bind a WebView2 user-data folder
+# already held by the first. Confirmed live, both ways.
+#
+# Fixed by giving the frozen .exe a second, lightweight entry point instead
+# of trying to run it as a bare interpreter: desktop/launcher.py checks for
+# a hidden `--browse-folder-worker <result-file>` argv, and — if present —
+# branches to _run_browse_folder_worker() before importing uvicorn/webview
+# or touching app.main at all, so the re-invoked process never becomes a
+# second copy of the app; it only ever opens the tkinter dialog and exits.
+# _run_frozen_folder_dialog() below invokes that flag instead of `-c
+# <script>` whenever sys.frozen is true. The dev/Docker path above
+# (`-c <script>` against a real interpreter) is untouched.
 DIALOG_SCRIPT = """
 import sys
 try:
@@ -75,18 +79,58 @@ except Exception as e:
 """
 
 
+def _run_frozen_folder_dialog(timeout_seconds: int) -> dict:
+    """Frozen-build equivalent of the `-c <script>` path above. Re-invokes
+    this same .exe with `--browse-folder-worker <result-file>`, which
+    desktop/launcher.py's main() intercepts before doing any of its normal
+    startup (see the comment above DIALOG_SCRIPT). Passes the result via a
+    temp file rather than stdout: PyInstaller's windowed (console=False)
+    bootloader does not reliably expose a capturable stdout pipe when the
+    same windowed exe is re-invoked as a child process, so a file avoids
+    that platform uncertainty entirely.
+    """
+    import tempfile
+
+    fd, result_path = tempfile.mkstemp(prefix="vk-browse-", suffix=".txt")
+    os.close(fd)
+    try:
+        try:
+            result = subprocess.run(
+                [sys.executable, "--browse-folder-worker", result_path],
+                timeout=timeout_seconds,
+            )
+        except subprocess.TimeoutExpired:
+            raise HTTPException(
+                status_code=504,
+                detail="Folder browser timed out — enter the path manually.",
+            )
+
+        output = Path(result_path).read_text(encoding="utf-8", errors="replace").strip()
+        if result.returncode != 0 or not output.startswith("OK:"):
+            raise HTTPException(
+                status_code=503,
+                detail="Folder browser closed unexpectedly (it may have crashed) — enter the path manually.",
+            )
+
+        path = output[len("OK:"):]
+        return {"path": path or None}
+    finally:
+        try:
+            os.remove(result_path)
+        except OSError:
+            pass
+
+
 def run_folder_dialog_isolated(timeout_seconds: int = BROWSE_DIALOG_TIMEOUT_SECONDS) -> dict:
-    """Runs DIALOG_SCRIPT in a brand-new `python -c` process and waits up to
+    """Runs DIALOG_SCRIPT (dev/Docker) or the frozen-build worker (packaged
+    desktop build) in a brand-new, throwaway process and waits up to
     `timeout_seconds` for it to finish. Whatever goes wrong inside that
     process — a crash, a hang, tkinter being broken on this machine — is
     contained to that one throwaway process and reported back as a clean
     HTTP error, never taking the real server down with it.
     """
     if getattr(sys, "frozen", False):
-        raise HTTPException(
-            status_code=503,
-            detail="Folder browser is unavailable in the packaged desktop build — enter the path manually.",
-        )
+        return _run_frozen_folder_dialog(timeout_seconds)
     if not TKINTER_AVAILABLE:
         raise HTTPException(
             status_code=503,

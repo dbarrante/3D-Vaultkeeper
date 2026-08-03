@@ -33,6 +33,32 @@ def wait_for_health(url: str, timeout_seconds: float = 15.0) -> bool:
     return False
 
 
+def run_browse_folder_worker(result_path: str) -> None:
+    """Entry point for this same .exe re-invoked with
+    `--browse-folder-worker <result-file>` (see
+    backend/app/routers/watcher.py's _run_frozen_folder_dialog). Opens a
+    native folder picker and writes the result to `result_path` instead of
+    stdout — see that function's docstring for why. Deliberately imports
+    nothing from uvicorn/webview/app.main: this must stay a fast, isolated
+    worker, never a second copy of the running app.
+    """
+    import tkinter
+    from tkinter import filedialog
+
+    try:
+        root = tkinter.Tk()
+        root.withdraw()
+        root.attributes("-topmost", True)
+        selected = filedialog.askdirectory()
+        root.destroy()
+        result = "OK:" + (selected or "")
+    except Exception as e:
+        result = "ERROR:" + str(e)
+
+    with open(result_path, "w", encoding="utf-8") as f:
+        f.write(result)
+
+
 def _run_server(port: int) -> None:
     # Imported here, not at module level: this keeps find_free_port/
     # wait_for_health importable and testable (desktop/tests/test_launcher.py)
@@ -49,6 +75,13 @@ def _run_server(port: int) -> None:
 
 
 def main() -> None:
+    # Checked before anything else, including the webview import below:
+    # this branch must stay a lightweight, fast-exiting worker, not a
+    # second copy of the full app. See run_browse_folder_worker's docstring.
+    if len(sys.argv) >= 3 and sys.argv[1] == "--browse-folder-worker":
+        run_browse_folder_worker(sys.argv[2])
+        return
+
     import webview
 
     port = find_free_port()
