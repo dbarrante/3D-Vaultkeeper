@@ -84,3 +84,49 @@ def test_ingest_file_without_pickup_sidecar_notes_ignores_sibling_txt(client, tm
     model = ingest_file(str(source), folder_id="1", original_filename="annotated.stl")  # default False
 
     assert model["description"] == ""
+
+
+def test_ingest_file_with_reference_only_does_not_copy(client, tmp_path):
+    from app.services.ingestion import ingest_file
+    from app.db import UPLOAD_DIR
+
+    source = tmp_path / "watched" / "model.stl"
+    source.parent.mkdir()
+    source.write_bytes(b"solid watched endsolid")
+
+    model = ingest_file(str(source), folder_id="1", original_filename="model.stl", reference_only=True)
+
+    assert model["name"] == "model.stl"
+    assert not any(f.startswith(model["id"]) for f in os.listdir(UPLOAD_DIR))
+    assert source.exists()
+
+
+def test_ingest_file_with_reference_only_records_source_path_and_storage_mode(client, tmp_path):
+    from app.services.ingestion import ingest_file
+    from app.db import get_db_conn
+
+    source = tmp_path / "model.stl"
+    source.write_bytes(b"solid endsolid")
+
+    model = ingest_file(str(source), folder_id="1", original_filename="model.stl", reference_only=True)
+
+    conn = get_db_conn()
+    row = conn.execute("SELECT sourcePath, storageMode FROM models WHERE id=?", (model["id"],)).fetchone()
+    conn.close()
+    assert row["sourcePath"] == str(source)
+    assert row["storageMode"] == "reference"
+
+
+def test_ingest_file_default_copy_mode_unaffected(client, tmp_path):
+    from app.services.ingestion import ingest_file
+    from app.db import get_db_conn
+
+    source = tmp_path / "model.stl"
+    source.write_bytes(b"solid endsolid")
+
+    model = ingest_file(str(source), folder_id="1", original_filename="model.stl")
+
+    conn = get_db_conn()
+    row = conn.execute("SELECT storageMode FROM models WHERE id=?", (model["id"],)).fetchone()
+    conn.close()
+    assert row["storageMode"] == "copy"
