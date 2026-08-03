@@ -45,6 +45,24 @@ git-ignored scratch ledger) has been deleted — git history from
 `docs/superpowers/plans/2026-08-03-local-installer.md`'s companion commits
 onward is the record.
 
+**Post-smoke-test fix (2026-08-03, commit `320f99c`):** clicking Browse in
+the installed app reported "Method not allowed" — root cause was that
+`frontend/vite.config.ts` bakes `VITE_API_URL` as the literal placeholder
+token `"TERA_API_URL"`, normally replaced by a Docker-entrypoint sed step
+(`frontend/env.sh`) that the desktop build never runs. Every API call was
+silently resolving to a bogus path and falling through `main.py`'s
+StaticFiles catch-all mount — POSTs 405'd, GETs silently got the SPA's own
+`index.html` instead of real JSON. Fixed via a shared
+`resolveApiOrigin()` in `services/api.ts` that treats that exact
+unreplaced placeholder as "use the page's own origin" (always correct
+for the desktop build's single-process, same-origin server), while
+leaving a genuinely empty `VITE_API_URL` (Docker misconfiguration)
+untouched so its existing "API Host Not Set" banner still fires. Verified
+against a rebuilt installer: `/api/folders` and `/api/watch-folders` now
+return real data; `/api/browse-folder` no longer 405s — it now reaches
+the already-documented, deliberately-deferred frozen-build limitation
+above instead of failing instantly for the wrong reason.
+
 ---
 
 ### Task 1: Frozen-aware data directory defaults
