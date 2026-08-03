@@ -76,6 +76,29 @@ second app instance. Verified: instant 503, zero extra processes
 spawned. Browse itself is still genuinely unavailable in the packaged
 build — this only replaces a broken attempt with an honest error.
 
+**Real fix for Browse (2026-08-03, commit `23bc652`):** asked to actually
+make it work rather than fail cleanly. The frozen-build blocker wasn't
+structural — only the `-c <script>` invocation style breaks when
+`sys.executable` is the app's own .exe, not subprocess re-invocation in
+general. Gave the frozen .exe a second entry point: `desktop/launcher.py`'s
+`main()` now checks for a hidden `--browse-folder-worker <result-file>`
+argv before importing uvicorn/webview or touching `app.main` at all, and
+branches straight to `run_browse_folder_worker()` — opens the native
+tkinter picker and writes the result to a file (not stdout, since
+PyInstaller's windowed bootloader doesn't reliably expose a capturable
+stdout pipe on self-re-invocation), then exits. `_run_frozen_folder_dialog()`
+in `watcher.py` invokes that flag instead of `-c <script>` when
+`sys.frozen`; the dev/Docker path is untouched. Verified against a
+rebuilt, freshly reinstalled copy (hash-confirmed to match, since a
+prior silent install had gone stale without erroring): invoking
+`--browse-folder-worker` opens a genuine native "Select Folder" dialog
+(confirmed via window enumeration — class `#32770`) with no server
+started and no second app window. Full interactive click-through
+wasn't exercised (no safe way to synthesize desktop input in this
+environment without risking the user's own session); the result-file
+parsing for both the success and cancel paths is covered by mocked
+unit tests instead.
+
 ---
 
 ### Task 1: Frozen-aware data directory defaults

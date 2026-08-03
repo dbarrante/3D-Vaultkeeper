@@ -176,17 +176,16 @@ bundles (not just this repo's own direct dependencies) lives in
 frontend portion with `frontend/scripts/generate-license-report.py`
 whenever dependencies change (see the script's own docstring).
 
-**Known limitation:** the native folder-browse dialog (the "Browse"
-button when adding a watched folder) is unavailable in the packaged
-desktop build — it returns a clean "unavailable, enter the path
-manually" error rather than opening a picker. (Earlier builds instead
-launched a second full app instance that hung or crashed; that's now
-detected and short-circuited to this clean error instead.) Works
-correctly in the normal (non-Docker) dev deployment; also unavailable in
-the Docker deployment, since the `python:3.9-slim` base image ships no
-tkinter. Type the folder path manually instead when running the
-packaged build or Docker. See the comment above `DIALOG_SCRIPT` in
-`backend/app/routers/watcher.py` for the technical reason.
+The native folder-browse dialog (the "Browse" button when adding a
+watched folder) works in the packaged desktop build too — the frozen
+.exe re-invokes itself with a hidden `--browse-folder-worker` flag
+(handled in `desktop/launcher.py`, before any of its normal startup) to
+open the picker in an isolated, throwaway process rather than trying to
+run `-c <script>` against itself. See the comment above `DIALOG_SCRIPT`
+in `backend/app/routers/watcher.py` for the technical reason this needs
+a different mechanism than the dev/Docker path. Still unavailable in the
+Docker deployment specifically, since the `python:3.9-slim` base image
+ships no tkinter at all — type the folder path manually there.
 
 ---
 
