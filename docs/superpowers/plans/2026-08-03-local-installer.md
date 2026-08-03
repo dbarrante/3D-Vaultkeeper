@@ -94,10 +94,13 @@ prior silent install had gone stale without erroring): invoking
 `--browse-folder-worker` opens a genuine native "Select Folder" dialog
 (confirmed via window enumeration — class `#32770`) with no server
 started and no second app window. Full interactive click-through
-wasn't exercised (no safe way to synthesize desktop input in this
-environment without risking the user's own session); the result-file
-parsing for both the success and cancel paths is covered by mocked
-unit tests instead.
+wasn't exercised by the agent (no safe way to synthesize desktop input
+in this environment without risking the user's own session); the
+result-file parsing for both the success and cancel paths is covered
+by mocked unit tests instead. **User-confirmed live the same day:**
+clicking Browse in the installed app opens the picker and returns the
+selected path correctly — the feature genuinely works end to end, not
+just at the mechanism level.
 
 ---
 
