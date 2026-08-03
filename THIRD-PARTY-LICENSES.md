@@ -46,7 +46,8 @@ zlib/libexpat/libmpdec/liblzma, none of which ship with a local
 canonical license file, so those are documented by name and canonical
 source URL instead (each says so explicitly in its own section). For
 the manually-curated MIT/BSD-3-Clause/Apache-2.0/ISC sections and the
-"Direct dependencies"/"Bundled Python runtime" tables, per-component
+"Direct dependencies"/"Bundled Python runtime"/"Transitive dependencies
+(backend)" tables, per-component
 copyright notices are listed alongside the shared license text, since
 preserving those — not just the license body text — is what MIT/BSD
 -style licenses actually require. The generated "Full frontend
