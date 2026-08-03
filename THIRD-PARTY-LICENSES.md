@@ -107,9 +107,14 @@ install. Confirmed present via direct inspection of
 
 ## Transitive dependencies (backend)
 
-Pulled in by direct dependencies above, not declared directly in
-`requirements.txt`, but confirmed actually embedded in the shipped build
-via `desktop/build/launcher/PYZ-00.toc`.
+Mostly pulled in by direct dependencies above rather than declared
+directly in `requirements.txt` — the one exception is `pytest`, which
+*is* a direct entry in `requirements.txt` (as a test dependency) but is
+included here rather than in "Direct dependencies" above since a small
+part of it ships in the built product for a reason unrelated to its
+declared purpose (see the intro's explanation). Every row below is
+confirmed actually embedded in the shipped build via
+`desktop/build/launcher/PYZ-00.toc`.
 
 | Component | Version | License |
 |---|---|---|
