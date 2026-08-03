@@ -63,6 +63,19 @@ return real data; `/api/browse-folder` no longer 405s — it now reaches
 the already-documented, deliberately-deferred frozen-build limitation
 above instead of failing instantly for the wrong reason.
 
+**Follow-up fixes (2026-08-03, commit `ace9334`):** user testing surfaced
+two more issues. (1) Leftover "STLVault"/"STL Vault" branding in the
+sidebar wordmark and browser-tab title, never updated for this fork's
+rebrand — fixed to "3D Vaultkeeper" in both places. (2) Clicking Browse
+returned "closed unexpectedly (it may have crashed)" rather than the
+120s hang the docs described — same known frozen-build limitation, just
+manifesting as a fast crash. `run_folder_dialog_isolated()` now checks
+`sys.frozen` and skips straight to a clean "unavailable" 503 before ever
+attempting the broken subprocess call, instead of spawning a crashing
+second app instance. Verified: instant 503, zero extra processes
+spawned. Browse itself is still genuinely unavailable in the packaged
+build — this only replaces a broken attempt with an honest error.
+
 ---
 
 ### Task 1: Frozen-aware data directory defaults
