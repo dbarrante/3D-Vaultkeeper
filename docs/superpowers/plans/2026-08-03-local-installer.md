@@ -19,6 +19,34 @@
 
 ---
 
+## Status: Complete
+
+All 6 tasks implemented, task-reviewed, and passed a final whole-branch
+review (6 Important findings found and fixed, including one fix-wave
+regression caught and reverted). `THIRD-PARTY-LICENSES.md` reached full
+closure across 7 review rounds (343-package frontend dependency tree via
+`frontend/scripts/generate-license-report.py`). Two remaining Important
+findings (a misleading `watcher.py` comment, missing README desktop-build
+docs) were fixed in a final doc round; the user explicitly chose to defer
+the rest as polish (app icon, `AppVersion`/`package.json` version sync,
+WebView2 prerequisite check, a `db.py` `UPLOAD_DIR.mkdir()` edge case).
+
+Final smoke test (2026-08-03): built `desktop\installer_output\3DVaultkeeper-Setup.exe`
+end-to-end (`desktop/build.ps1`), then ran a real silent
+install → launch → uninstall cycle. Installed to `C:\Program Files\3D
+Vaultkeeper` with a proper uninstall registry entry; launched to a real
+window and created `%LOCALAPPDATA%\3D Vaultkeeper\` (`data.db`,
+`uploads/manuals`) on first run; uninstall removed `Program Files` and the
+registry entry while leaving `%LOCALAPPDATA%\3D Vaultkeeper\` completely
+untouched — the one safety property that matters most for a sold product.
+
+The SDD workspace (`.superpowers/sdd/2026-08-03-local-installer/`, a
+git-ignored scratch ledger) has been deleted — git history from
+`docs/superpowers/plans/2026-08-03-local-installer.md`'s companion commits
+onward is the record.
+
+---
+
 ### Task 1: Frozen-aware data directory defaults
 
 **Files:**
