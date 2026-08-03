@@ -1,3 +1,6 @@
+import os
+
+
 def _upload(client, name="test.stl", folder_id="1"):
     return client.post(
         "/api/models/upload",
@@ -47,3 +50,37 @@ def test_download_missing_model_currently_returns_500_known_bug(client):
     # refactor; fixing the bug is a separate, deliberate follow-up task.
     response = client.get("/api/models/does-not-exist/download")
     assert response.status_code == 500
+
+
+def test_reference_model_reports_missing_false_when_file_present(client, tmp_path):
+    from app.services.ingestion import ingest_file
+
+    source = tmp_path / "present.stl"
+    source.write_bytes(b"solid endsolid")
+    model = ingest_file(str(source), folder_id="1", original_filename="present.stl", reference_only=True)
+
+    listed = client.get("/api/models", params={"folderId": "1"}).json()
+    found = next(m for m in listed if m["id"] == model["id"])
+    assert found["storageMode"] == "reference"
+    assert found["missing"] is False
+
+
+def test_reference_model_reports_missing_true_when_file_deleted(client, tmp_path):
+    from app.services.ingestion import ingest_file
+
+    source = tmp_path / "gone.stl"
+    source.write_bytes(b"solid endsolid")
+    model = ingest_file(str(source), folder_id="1", original_filename="gone.stl", reference_only=True)
+    os.remove(source)
+
+    listed = client.get("/api/models", params={"folderId": "1"}).json()
+    found = next(m for m in listed if m["id"] == model["id"])
+    assert found["missing"] is True
+
+
+def test_copy_mode_model_never_reports_missing(client):
+    created = _upload(client)
+    listed = client.get("/api/models", params={"folderId": "1"}).json()
+    found = next(m for m in listed if m["id"] == created["id"])
+    assert found["storageMode"] == "copy"
+    assert found["missing"] is False

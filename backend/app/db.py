@@ -130,6 +130,9 @@ def row_to_model(row: sqlite3.Row) -> Dict[str, Any]:
             tags = json.loads(row["tags"])
         except Exception:
             tags = []
+    storage_mode = row["storageMode"] if "storageMode" in row.keys() else "copy"
+    source_path = row["sourcePath"] if "sourcePath" in row.keys() else None
+    missing = storage_mode == "reference" and bool(source_path) and not os.path.exists(source_path)
     return {
         "id": row["id"],
         "name": row["name"],
@@ -146,7 +149,9 @@ def row_to_model(row: sqlite3.Row) -> Dict[str, Any]:
         "category": row["category"] if "category" in row.keys() else None,
         "colorCount": row["colorCount"] if "colorCount" in row.keys() else None,
         "sliceSettings": row["sliceSettings"] if "sliceSettings" in row.keys() else None,
-        "sourcePath": row["sourcePath"] if "sourcePath" in row.keys() else None,
+        "sourcePath": source_path,
+        "storageMode": storage_mode,
+        "missing": missing,
     }
 
 
