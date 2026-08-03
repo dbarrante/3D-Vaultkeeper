@@ -37,8 +37,23 @@ BROWSE_DIALOG_TIMEOUT_SECONDS = 120
 # trying to rebind the same port, taking the real one down with it.
 # Confirmed live: the process tree showed a second `-m uvicorn app.main:app`
 # process as a direct child of the real one. subprocess.run with an explicit
-# `-c <script>` has no such entry point to re-invoke — it just runs exactly
-# the script given to it, nothing else.
+# `-c <script>` has no such entry point to re-invoke in a normal
+# `python -m uvicorn ...` launch — it just runs exactly the script given to
+# it, nothing else.
+#
+# KNOWN LIMITATION, not fixed here: this reasoning does NOT hold for the
+# packaged desktop build (see docs/superpowers/plans/2026-08-03-local-installer.md).
+# There, `sys.executable` is the frozen app's own .exe (PyInstaller), which
+# ignores the `-c <script>` argument and re-launches the whole application
+# instead of a bare interpreter — the exact same class of bug as the
+# multiprocessing one above, just triggered a different way. In a packaged
+# build, clicking Browse spawns a second full app instance (its own server,
+# its own window, a second writer against the same SQLite DB) that never
+# emits the expected `OK:` response, so the request hangs for the full
+# BROWSE_DIALOG_TIMEOUT_SECONDS before failing. Confirmed live. Needs
+# frozen-build detection (`sys.frozen`) here to either skip straight to the
+# "unavailable" response or invoke a real bundled interpreter instead of
+# `sys.executable` — deliberately left unfixed pending that design decision.
 DIALOG_SCRIPT = """
 import sys
 try:

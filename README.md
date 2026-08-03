@@ -139,6 +139,54 @@ You can deploy STLVault directly from any git deploy compatible docker manager u
 
 ---
 
+## 💻 Desktop Build (Windows)
+
+Besides Docker, this fork can also be packaged as a standalone Windows
+installer — no Docker, no Python/Node install required on the target
+machine. Useful for a single-user local install rather than a
+self-hosted server.
+
+**Prerequisites** (one-time setup):
+- A Python venv at `backend/.venv` with `backend/requirements.txt` and
+  `desktop/requirements.txt` both installed (`pip install -r
+  desktop/requirements.txt` on top of the backend venv — adds
+  `pyinstaller` and `pywebview`).
+- [Inno Setup](https://jrsoftware.org/isinfo.php), installed via
+  `winget install JRSoftware.InnoSetup`. If it doesn't land on `PATH`
+  automatically, `desktop/build.ps1` falls back to its default winget
+  install location on its own — no manual `PATH` edit needed.
+- [`bun`](https://bun.sh) for the frontend build.
+
+**Build:**
+
+```powershell
+cd desktop
+powershell -ExecutionPolicy Bypass -File build.ps1
+```
+
+This builds the frontend, bundles the backend + frontend into a
+PyInstaller `--onedir` build, and compiles the final installer to
+`desktop/installer_output/3DVaultkeeper-Setup.exe`. Before shipping a
+new release, bump `AppVersion` in `desktop/installer.iss` by hand — it
+isn't currently linked to `frontend/package.json`'s version.
+
+Third-party license compliance for everything the installer actually
+bundles (not just this repo's own direct dependencies) lives in
+[`THIRD-PARTY-LICENSES.md`](THIRD-PARTY-LICENSES.md) — regenerate the
+frontend portion with `frontend/scripts/generate-license-report.py`
+whenever dependencies change (see the script's own docstring).
+
+**Known limitation:** the native folder-browse dialog (the "Browse"
+button when adding a watched folder) does not work correctly in the
+packaged desktop build — it launches a second full app instance instead
+of a plain file-picker dialog and times out after ~2 minutes. Works
+correctly in the normal dev/Docker deployment. Type the folder path
+manually instead when running the packaged build. See the comment above
+`DIALOG_SCRIPT` in `backend/app/routers/watcher.py` for the technical
+reason.
+
+---
+
 ## 📂 Volume Configuration
 
 The application requires two main volumes to persist data. If you are using the default `docker-compose.yml`, these are mapped automatically relative to the backend folder:
