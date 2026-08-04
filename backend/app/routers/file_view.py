@@ -7,6 +7,9 @@ from pydantic import BaseModel
 
 from app.db import get_db_conn, MANUAL_DIR, UPLOAD_DIR
 from app.services.file_view_ops import (
+    ensure_unambiguous_path,
+    is_self_nested_move,
+    path_conflicts_with_watch_root,
     rewrite_affected_paths,
     resolve_storage_mode_for_path,
     validate_destination,
@@ -14,6 +17,15 @@ from app.services.file_view_ops import (
 )
 
 router = APIRouter(prefix="/api/file-view", tags=["file-view"])
+
+# Shared by rename/move/delete: all three would orphan a watch_folders.path row
+# in exactly the same way, so they say so in exactly the same words.
+WATCH_ROOT_CONFLICT_DETAIL = (
+    "Refusing to {verb} a folder that is, or contains, a watched folder. "
+    "Remove it from Watch Folders first if you want to do this."
+)
+
+SELF_NESTED_DETAIL = "Cannot move a folder into itself or one of its own subfolders."
 
 
 class FolderRenameRequest(BaseModel):
@@ -26,18 +38,25 @@ def rename_folder(body: FolderRenameRequest):
     source = Path(body.path)
     if not source.is_dir():
         raise HTTPException(status_code=404, detail=f"Folder not found: {body.path}")
+    # Absoluteness is checked before anything reasons about source.resolve(),
+    # since a cwd-relative source makes every guard below reason about the
+    # wrong directory entirely.
+    try:
+        ensure_unambiguous_path(source)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     destination = source.parent / body.newName
     if destination.exists():
         raise HTTPException(status_code=409, detail=f"A folder already exists at {destination}")
-    source_resolved = source.resolve()
-    destination_resolved = destination.resolve()
-    if destination_resolved == source_resolved or source_resolved in destination_resolved.parents:
-        raise HTTPException(status_code=400, detail="Cannot move a folder into itself or one of its own subfolders.")
+    if is_self_nested_move(source, destination):
+        raise HTTPException(status_code=400, detail=SELF_NESTED_DETAIL)
     try:
         storage_mode = resolve_storage_mode_for_path(source)
         validate_destination(str(destination), storage_mode)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+    if path_conflicts_with_watch_root(source):
+        raise HTTPException(status_code=400, detail=WATCH_ROOT_CONFLICT_DETAIL.format(verb="rename"))
     shutil.move(str(source), str(destination))
     rewrite_affected_paths(str(source), str(destination))
     return {"path": str(destination)}
@@ -53,18 +72,24 @@ def move_folder(body: FolderMoveRequest):
     source = Path(body.sourcePath)
     if not source.is_dir():
         raise HTTPException(status_code=404, detail=f"Folder not found: {body.sourcePath}")
+    try:
+        ensure_unambiguous_path(source)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     destination = Path(body.targetPath)
     if destination.exists():
         raise HTTPException(status_code=409, detail=f"A folder already exists at {destination}")
-    source_resolved = source.resolve()
-    destination_resolved = destination.resolve()
-    if destination_resolved == source_resolved or source_resolved in destination_resolved.parents:
-        raise HTTPException(status_code=400, detail="Cannot move a folder into itself or one of its own subfolders.")
+    if is_self_nested_move(source, destination):
+        raise HTTPException(status_code=400, detail=SELF_NESTED_DETAIL)
     try:
         storage_mode = resolve_storage_mode_for_path(source)
         validate_destination(str(destination), storage_mode)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+    if path_conflicts_with_watch_root(source):
+        raise HTTPException(status_code=400, detail=WATCH_ROOT_CONFLICT_DETAIL.format(verb="move"))
+    # Only now, with every guard cleared, is it safe to create intermediate
+    # directories -- a rejected move must never leave a stray one behind.
     destination.parent.mkdir(parents=True, exist_ok=True)
     shutil.move(str(source), str(destination))
     rewrite_affected_paths(str(source), str(destination))
@@ -81,23 +106,24 @@ def delete_folder(body: FolderDeleteRequest):
     if not target.is_dir():
         raise HTTPException(status_code=404, detail=f"Folder not found: {body.path}")
 
+    # Before resolved is computed, since Path("C:").resolve() silently yields
+    # the backend's cwd rather than the drive root -- which is exactly why the
+    # drive-root guard below never fired for the bare "C:" node the File-mode
+    # tree emits.
+    try:
+        ensure_unambiguous_path(target)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
     resolved = target.resolve()
     if resolved.parent == resolved:
         raise HTTPException(status_code=400, detail="Refusing to delete a drive root.")
 
-    conn = get_db_conn()
-    try:
-        watch_roots = {
-            Path(row["path"]).resolve()
-            for row in conn.execute("SELECT path FROM watch_folders").fetchall()
-        }
-    finally:
-        conn.close()
-    if resolved in watch_roots:
-        raise HTTPException(
-            status_code=400,
-            detail="Refusing to delete a watched folder's root. Remove it from Watch Folders first if you really want to delete it.",
-        )
+    # Covers both "this IS a watch root" (the original exact-match check) and
+    # "this CONTAINS a watch root", which previously slipped through and
+    # orphaned the nested watch folder's row.
+    if path_conflicts_with_watch_root(target):
+        raise HTTPException(status_code=400, detail=WATCH_ROOT_CONFLICT_DETAIL.format(verb="delete"))
 
     if resolved == Path(UPLOAD_DIR).resolve():
         raise HTTPException(status_code=400, detail="Refusing to delete the entire managed library folder.")

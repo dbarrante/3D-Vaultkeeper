@@ -4,6 +4,82 @@ from pathlib import Path
 from app.db import get_db_conn, UPLOAD_DIR
 
 
+def ensure_unambiguous_path(path) -> None:
+    """Reject any path that isn't absolute, BEFORE .resolve() is allowed to run.
+
+    On Windows a bare drive letter ("C:") is a *drive-relative* path: it
+    resolves against the process's current working directory on that drive,
+    NOT to "C:\\". The File-mode tree emits exactly that string as the node id
+    for a drive-letter node, and because Path("C:").resolve() returns the
+    backend's own cwd, `resolved.parent == resolved` never fires for it and
+    the containment checks below happily accept it whenever the backend's cwd
+    happens to sit under UPLOAD_DIR or a watch root. The same reasoning
+    applies to any relative path on any platform.
+
+    Deliberately uses the NATIVE path flavour rather than PureWindowsPath:
+    the backend also ships as a Linux container (see .github/workflows), where
+    PureWindowsPath("/app/uploads/x").is_absolute() is False and would reject
+    every legitimate POSIX path. On Windows the native flavour is the Windows
+    flavour, so "C:" is still correctly rejected and "C:\\x" accepted.
+    """
+    if not Path(str(path)).is_absolute():
+        raise ValueError(
+            f"{path} is not an absolute path -- refusing to act on an "
+            "ambiguous, cwd-relative location"
+        )
+
+
+def path_conflicts_with_watch_root(candidate: Path) -> bool:
+    """True if candidate IS a registered watch folder's root, or CONTAINS one
+    as a descendant.
+
+    Renaming, moving, or deleting such a path would silently orphan that watch
+    folder's `watch_folders.path` row -- it would keep pointing at a directory
+    that no longer exists there, and the watcher would silently return 0
+    results on every future scan with no visible error, rather than fail
+    loudly.
+
+    Note the containment direction: `resolved in root.parents` means "candidate
+    CONTAINS root", the inverse of the `root in resolved.parents` test used by
+    validate_destination ("candidate is UNDER root"). Getting these backwards
+    still passes the exact-match case via `==` while silently permitting the
+    orphaning case this helper exists to stop.
+    """
+    resolved = candidate.resolve()
+    conn = get_db_conn()
+    try:
+        watch_roots = [
+            Path(row["path"]).resolve()
+            for row in conn.execute("SELECT path FROM watch_folders").fetchall()
+        ]
+    finally:
+        conn.close()
+    for root in watch_roots:
+        if resolved == root or resolved in root.parents:
+            return True
+    return False
+
+
+def is_self_nested_move(source: Path, destination: Path) -> bool:
+    """True if destination is the source itself or sits inside the source's own
+    subtree.
+
+    Such a move passes both the 409-exists check (the destination doesn't exist
+    yet) and containment validation (it still resolves inside the same allowed
+    root), and shutil.move would then raise -- surfacing as an unhandled 500.
+    Worse, move_folder's destination.parent.mkdir(parents=True) would already
+    have created the intermediate directories INSIDE the still-present source
+    before that happened, leaving a stray directory behind. Shared by
+    rename_folder and move_folder, which enforce the identical rule.
+    """
+    source_resolved = source.resolve()
+    destination_resolved = destination.resolve()
+    return (
+        destination_resolved == source_resolved
+        or source_resolved in destination_resolved.parents
+    )
+
+
 def validate_destination(new_path: str, storage_mode: str) -> Path:
     """Ensure a rename/move destination resolves inside an allowed root.
 
@@ -18,6 +94,7 @@ def validate_destination(new_path: str, storage_mode: str) -> Path:
     ever scan that location again -- so that's rejected rather than
     silently allowed.
     """
+    ensure_unambiguous_path(new_path)
     resolved = Path(new_path).resolve()
 
     if storage_mode == "copy":
@@ -52,6 +129,7 @@ def resolve_storage_mode_for_path(path: Path) -> str:
     should only happen if the path was never a legitimate File-mode node
     to begin with.
     """
+    ensure_unambiguous_path(path)
     resolved = path.resolve()
     upload_root = Path(UPLOAD_DIR).resolve()
     if resolved == upload_root or upload_root in resolved.parents:

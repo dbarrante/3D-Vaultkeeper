@@ -1,6 +1,13 @@
 import os
 from pathlib import Path
 
+import pytest
+
+windows_only = pytest.mark.skipif(
+    os.name != "nt",
+    reason="bare drive-letter paths ('C:') are a Windows drive-relative-path quirk",
+)
+
 
 def _insert_folder(conn, folder_id, name, parent_id=None):
     conn.execute(
@@ -440,3 +447,227 @@ def test_move_folder_into_own_subtree_rejected(client, tmp_path):
     assert src_dir.exists()  # untouched
     assert f1.exists()
     assert sorted(p.name for p in src_dir.iterdir()) == ["hull.stl"]  # no stray "Sub" dir created
+
+
+# ---------------------------------------------------------------------------
+# Non-absolute / drive-relative source paths
+# ---------------------------------------------------------------------------
+
+
+def _bare_drive(tmp_path):
+    """The bare drive-letter form ("C:") of whatever drive tmp_path lives on.
+
+    This is exactly what the File-mode tree emits as the top node id for a
+    reference-mode file whose watch root sits at a drive root.
+    """
+    return tmp_path.anchor.rstrip("\\/")
+
+
+@windows_only
+def test_delete_folder_refuses_bare_drive_letter(client, tmp_path, monkeypatch):
+    """Path("C:") does NOT resolve to C:\\ -- Windows treats a bare drive letter
+    as *drive-relative*, so it resolves against the process's current working
+    directory on that drive. The pre-existing `resolved.parent == resolved`
+    drive-root guard therefore never fires for it, and if the backend's cwd
+    happens to sit inside UPLOAD_DIR (or a watch root), "C:" sails through the
+    containment check and rmtree's the cwd. chdir into a subdirectory of
+    UPLOAD_DIR reproduces exactly that arrangement.
+    """
+    upload_dir = Path(os.environ["FILE_STORAGE"])
+    sub = upload_dir / "Sub"
+    sub.mkdir()
+    (sub / "keep.stl").write_text("do not delete me")
+    monkeypatch.chdir(sub)
+
+    resp = client.request("DELETE", "/api/file-view/folder", json={"path": _bare_drive(tmp_path)})
+    assert resp.status_code == 400
+    assert "absolute" in resp.json()["detail"].lower()
+    assert sub.exists()
+    assert (sub / "keep.stl").read_text() == "do not delete me"
+
+
+def test_delete_folder_refuses_relative_path(client, tmp_path, monkeypatch):
+    """Cross-platform half of the same hole: any non-absolute path resolves
+    against the process cwd rather than naming an unambiguous location, so it
+    is never a legitimate File-mode node regardless of what it happens to
+    resolve to.
+    """
+    upload_dir = Path(os.environ["FILE_STORAGE"])
+    sub = upload_dir / "Sub"
+    sub.mkdir()
+    (sub / "keep.stl").write_text("do not delete me")
+    monkeypatch.chdir(upload_dir)
+
+    resp = client.request("DELETE", "/api/file-view/folder", json={"path": "Sub"})
+    assert resp.status_code == 400
+    assert sub.exists()
+    assert (sub / "keep.stl").read_text() == "do not delete me"
+
+
+@windows_only
+def test_rename_folder_refuses_bare_drive_letter_source(client, tmp_path, monkeypatch):
+    upload_dir = Path(os.environ["FILE_STORAGE"])
+    sub = upload_dir / "Sub"
+    sub.mkdir()
+    monkeypatch.chdir(sub)
+
+    resp = client.post(
+        "/api/file-view/folder/rename",
+        json={"path": _bare_drive(tmp_path), "newName": "Renamed"},
+    )
+    assert resp.status_code == 400
+    assert "absolute" in resp.json()["detail"].lower()
+    assert sub.exists()
+
+
+@windows_only
+def test_move_folder_refuses_bare_drive_letter_source(client, tmp_path, monkeypatch):
+    upload_dir = Path(os.environ["FILE_STORAGE"])
+    sub = upload_dir / "Sub"
+    sub.mkdir()
+    monkeypatch.chdir(sub)
+
+    resp = client.post(
+        "/api/file-view/folder/move",
+        json={"sourcePath": _bare_drive(tmp_path), "targetPath": str(upload_dir / "Moved")},
+    )
+    assert resp.status_code == 400
+    assert "absolute" in resp.json()["detail"].lower()
+    assert sub.exists()
+    assert not (upload_dir / "Moved").exists()
+
+
+def test_validate_destination_rejects_non_absolute_destination(client, tmp_path, monkeypatch):
+    """Destination side of the same guard, covering
+    PATCH /api/models/{id}/location as well as the folder endpoints.
+    """
+    from app.services.file_view_ops import validate_destination
+
+    upload_dir = Path(os.environ["FILE_STORAGE"])
+    monkeypatch.chdir(upload_dir)
+    with pytest.raises(ValueError, match="absolute"):
+        validate_destination("relative_dest.stl", "copy")
+
+
+# ---------------------------------------------------------------------------
+# Watch-root protection for rename / move / delete
+# ---------------------------------------------------------------------------
+
+
+def _nested_watch_roots(tmp_path):
+    """A realistic arrangement: the user watches D:\\Models AND, separately,
+    D:\\Models\\Projects\\Archive. Returns (outer_root, middle, inner_root).
+    """
+    outer = tmp_path / "watched"
+    middle = outer / "Projects"
+    inner = middle / "Archive"
+    inner.mkdir(parents=True)
+    return outer, middle, inner
+
+
+def _register_watch_roots(*paths):
+    from app.db import get_db_conn
+
+    conn = get_db_conn()
+    _insert_folder(conn, "f1", "Root")
+    for index, path in enumerate(paths):
+        conn.execute(
+            "INSERT INTO watch_folders(id,path,folderId) VALUES (?,?,?)",
+            (f"wf{index}", str(path), "f1"),
+        )
+    conn.commit()
+    conn.close()
+
+
+def test_rename_folder_refuses_watch_folder_root(client, tmp_path):
+    """Renaming a registered watch folder's own root leaves watch_folders.path
+    pointing at a directory that no longer exists -- the watcher then silently
+    returns 0 results on every future scan instead of failing loudly.
+    """
+    outer, _middle, inner = _nested_watch_roots(tmp_path)
+    _register_watch_roots(outer, inner)
+
+    resp = client.post("/api/file-view/folder/rename", json={"path": str(inner), "newName": "Renamed"})
+    assert resp.status_code == 400
+    assert inner.exists()
+    assert not (inner.parent / "Renamed").exists()
+
+
+def test_rename_folder_refuses_folder_containing_watch_root(client, tmp_path):
+    outer, middle, inner = _nested_watch_roots(tmp_path)
+    _register_watch_roots(outer, inner)
+
+    resp = client.post("/api/file-view/folder/rename", json={"path": str(middle), "newName": "Renamed"})
+    assert resp.status_code == 400
+    assert middle.exists()
+    assert inner.exists()  # nested watch root untouched
+    assert not (outer / "Renamed").exists()
+
+
+def test_move_folder_refuses_watch_folder_root(client, tmp_path):
+    outer, _middle, inner = _nested_watch_roots(tmp_path)
+    _register_watch_roots(outer, inner)
+
+    target = str(outer / "MovedArchive")
+    resp = client.post("/api/file-view/folder/move", json={"sourcePath": str(inner), "targetPath": target})
+    assert resp.status_code == 400
+    assert inner.exists()
+    assert not Path(target).exists()
+
+
+def test_move_folder_refuses_folder_containing_watch_root(client, tmp_path):
+    outer, middle, inner = _nested_watch_roots(tmp_path)
+    _register_watch_roots(outer, inner)
+
+    target = str(outer / "MovedProjects")
+    resp = client.post("/api/file-view/folder/move", json={"sourcePath": str(middle), "targetPath": target})
+    assert resp.status_code == 400
+    assert middle.exists()
+    assert inner.exists()  # nested watch root untouched
+    assert not Path(target).exists()
+
+
+def test_delete_folder_refuses_folder_containing_watch_root(client, tmp_path):
+    """delete_folder's original guard was exact-match only (`resolved in
+    watch_roots`), so deleting a PARENT of a registered watch root silently
+    orphaned it -- the row survived, its directory did not.
+    """
+    outer, middle, inner = _nested_watch_roots(tmp_path)
+    _register_watch_roots(outer, inner)
+    (inner / "hull.stl").write_text("data")
+
+    resp = client.request("DELETE", "/api/file-view/folder", json={"path": str(middle)})
+    assert resp.status_code == 400
+    assert middle.exists()
+    assert inner.exists()  # nested watch root untouched
+    assert (inner / "hull.stl").exists()
+
+
+def test_rename_folder_ordinary_subfolder_of_watch_root_still_works(client, tmp_path):
+    """The watch-root guard must not over-reach: an ordinary subfolder with no
+    watch_folders row of its own (and none nested under it) stays renameable.
+    """
+    outer, _middle, _inner = _nested_watch_roots(tmp_path)
+    ordinary = outer / "Ordinary"
+    ordinary.mkdir()
+    _register_watch_roots(outer)
+
+    resp = client.post("/api/file-view/folder/rename", json={"path": str(ordinary), "newName": "Renamed"})
+    assert resp.status_code == 200
+    assert not ordinary.exists()
+    assert (outer / "Renamed").exists()
+    assert outer.exists()
+
+
+def test_move_folder_ordinary_subfolder_of_watch_root_still_works(client, tmp_path):
+    outer, _middle, _inner = _nested_watch_roots(tmp_path)
+    ordinary = outer / "Ordinary"
+    ordinary.mkdir()
+    _register_watch_roots(outer)
+
+    target = str(outer / "Moved" / "Ordinary")
+    resp = client.post("/api/file-view/folder/move", json={"sourcePath": str(ordinary), "targetPath": target})
+    assert resp.status_code == 200
+    assert not ordinary.exists()
+    assert Path(target).exists()
+    assert outer.exists()
