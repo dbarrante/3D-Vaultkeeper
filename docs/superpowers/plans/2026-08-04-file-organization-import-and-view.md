@@ -14,7 +14,7 @@
 - No retroactive backfill of `filePath` that invents structure — existing copy-mode uploads that predate this feature keep their real flat storage location; the backfill records that location as-is, it doesn't reorganize anything.
 - No tracking of "already imported from this root" — the wizard can be run again against the same directory; it will simply show whatever's left there.
 - No deduplication against files already in the library.
-- Physical filenames stay the existing opaque `<model-id>.<ext>` convention (via `ingest_file`) — never the original filename — so filesystem name collisions are architecturally impossible; no auto-suffix logic is needed or should be added.
+- Physical filenames for **model files** stay the existing opaque `<model-id>.<ext>` convention (via `ingest_file`) — never the original filename — so filesystem name collisions are architecturally impossible for them; no auto-suffix logic should be added for model files. This does **not** apply to non-model sibling files (Task 4's `commit_placement_file`), which keep their real original names when moved and can therefore genuinely collide — Task 4's small auto-suffix loop for that path is correct and intentional, not a violation of this constraint.
 - A dragged folder's contents move file-by-file (not as a single directory move), so results and retry operate at file granularity, grouped for display under the placement the user actually dragged.
 - Folder names become real filesystem path segments for the first time in this feature — every segment must be sanitized before being joined into a path.
 
