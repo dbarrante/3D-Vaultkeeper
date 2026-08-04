@@ -1,6 +1,7 @@
 import os
 import json
 import base64
+import logging
 import tempfile
 import shutil
 import uuid
@@ -17,6 +18,8 @@ from app.services.file_view_ops import validate_destination
 from app.services.import_wizard import folder_disk_path
 
 router = APIRouter()
+
+logger = logging.getLogger(__name__)
 
 
 def _resolve_copy_mode_file(model_id: str, file_path: Optional[str]) -> Optional[str]:
@@ -209,7 +212,18 @@ def update_model_location(model_id: str, body: LocationUpdate):
             try:
                 shutil.move(persisted_path, current_path)
             except Exception:
-                pass
+                # Double failure: the DB write failed AND the file couldn't be
+                # put back. The file is now stranded at persisted_path while
+                # the DB still points at current_path. Swallowing this silently
+                # left no trace at all to diagnose from -- the original
+                # exception is still re-raised below either way.
+                logger.exception(
+                    "Rollback move failed for model %s: file stranded at %s, "
+                    "database still points at %s",
+                    model_id,
+                    persisted_path,
+                    current_path,
+                )
             raise
 
         row = cur.execute("SELECT * FROM models WHERE id=?", (model_id,)).fetchone()
@@ -235,12 +249,26 @@ def duplicate_model(model_id: str):
         if not current_path or not os.path.exists(current_path):
             raise HTTPException(status_code=404, detail="File not found on disk")
 
-        try:
-            dest_subpath = folder_disk_path(m["folderId"])
-        except ValueError as exc:
-            raise HTTPException(status_code=404, detail=str(exc))
-
-        dest_dir = Path(UPLOAD_DIR) / dest_subpath
+        if storage_mode == "reference":
+            # A reference-mode file lives outside the managed library entirely,
+            # so there's no "beside the original" that would be legal for a
+            # copy-mode duplicate. Mirroring its logical folder assignment
+            # under UPLOAD_DIR is the only sensible default.
+            try:
+                dest_subpath = folder_disk_path(m["folderId"])
+            except ValueError as exc:
+                raise HTTPException(status_code=404, detail=str(exc))
+            dest_dir = Path(UPLOAD_DIR) / dest_subpath
+        else:
+            # File view is deliberately a distinct lens from Logical view:
+            # PATCH /api/models/{id}/location lets a copy-mode file's real
+            # filePath diverge from what folder_disk_path(folderId) implies.
+            # Mirroring the logical folder here would drop the duplicate
+            # wherever folderId points instead of beside the file the user
+            # actually duplicated. folder_disk_path is not consulted at all on
+            # this branch, so an orphaned folderId can't 404 a copy-mode
+            # duplicate either.
+            dest_dir = Path(current_path).parent
         dest_dir.mkdir(parents=True, exist_ok=True)
         new_id = str(uuid.uuid4())
         ext = os.path.splitext(current_path)[-1]

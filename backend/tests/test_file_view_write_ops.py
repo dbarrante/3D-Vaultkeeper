@@ -285,10 +285,22 @@ def test_duplicate_reference_mode_file_becomes_copy_mode(client, tmp_path):
     assert src.exists(), "original watched file must be untouched"
 
 
-def test_duplicate_mirrors_folder_disk_path(client, tmp_path):
+def test_duplicate_copy_mode_lands_beside_current_file_not_folder_disk_path(client, tmp_path):
+    """File view is deliberately a distinct lens from Logical view: after a
+    File-mode move, a copy-mode file's real filePath diverges from what
+    folder_disk_path(folderId) implies. Duplicating must follow the FILE
+    (land beside where it actually lives right now), not the logical folder
+    assignment -- otherwise the copy silently appears in a directory the user
+    wasn't even looking at.
+    """
     from app.db import get_db_conn
     upload_dir = Path(os.environ["FILE_STORAGE"])
-    src = upload_dir / "abc123.stl"
+    # Physically parked somewhere that does NOT match folderId's logical chain
+    # (which would be UPLOAD_DIR/Root/Vehicles) -- exactly the divergence a
+    # File-mode move produces.
+    actual_dir = upload_dir / "Elsewhere"
+    actual_dir.mkdir()
+    src = actual_dir / "abc123.stl"
     src.write_text("model data")
 
     conn = get_db_conn()
@@ -301,7 +313,42 @@ def test_duplicate_mirrors_folder_disk_path(client, tmp_path):
     resp = client.post("/api/models/abc123/duplicate")
     assert resp.status_code == 200
     new_path = Path(resp.json()["filePath"])
+    assert new_path.parent == actual_dir
+    assert new_path != src
+    assert new_path.exists()
+    assert src.exists(), "original file must be untouched"
+    assert not (upload_dir / "Root" / "Vehicles").exists(), "must not mirror the logical folder chain"
+
+
+def test_duplicate_reference_mode_mirrors_folder_disk_path(client, tmp_path):
+    """Unchanged behavior for reference-mode: the source lives outside the
+    managed library, so there is no legal "beside the original" for a
+    copy-mode duplicate -- mirroring the logical folder under UPLOAD_DIR
+    remains the only sensible default.
+    """
+    from app.db import get_db_conn
+    upload_dir = Path(os.environ["FILE_STORAGE"])
+    watch_root = tmp_path / "watched"
+    watch_root.mkdir()
+    src = watch_root / "hull.stl"
+    src.write_text("model data")
+
+    conn = get_db_conn()
+    _insert_folder(conn, "root", "Root")
+    _insert_folder(conn, "vehicles", "Vehicles", parent_id="root")
+    conn.execute(
+        "INSERT INTO watch_folders(id,path,folderId) VALUES (?,?,?)",
+        ("wf1", str(watch_root), "root"),
+    )
+    _insert_model(conn, "m1", "vehicles", str(src), storage_mode="reference", source_path=str(src))
+    conn.commit()
+    conn.close()
+
+    resp = client.post("/api/models/m1/duplicate")
+    assert resp.status_code == 200
+    new_path = Path(resp.json()["filePath"])
     assert new_path.parent == upload_dir / "Root" / "Vehicles"
+    assert src.exists(), "original watched file must be untouched"
 
 
 def test_duplicate_missing_model_404s(client):
@@ -310,20 +357,33 @@ def test_duplicate_missing_model_404s(client):
 
 
 def test_duplicate_deep_folder_hierarchy_mirrors_all_segments(client, tmp_path):
+    """Reference-mode source: this is the branch that still consults
+    folder_disk_path, so it's where deep-hierarchy mirroring is now tested.
+    (It was previously written against a copy-mode source whose physical
+    location already diverged from its folderId chain -- that setup no longer
+    exercises mirroring at all, since copy-mode duplicates now follow the
+    file's real directory.)
+    """
     from app.db import get_db_conn
     upload_dir = Path(os.environ["FILE_STORAGE"])
-    src = upload_dir / "abc123.stl"
+    watch_root = tmp_path / "watched"
+    watch_root.mkdir()
+    src = watch_root / "hull.stl"
     src.write_text("model data")
 
     conn = get_db_conn()
     _insert_folder(conn, "root", "Root")
     _insert_folder(conn, "vehicles", "Vehicles", parent_id="root")
     _insert_folder(conn, "tanks", "Tanks", parent_id="vehicles")
-    _insert_model(conn, "abc123", "tanks", str(src), storage_mode="copy")
+    conn.execute(
+        "INSERT INTO watch_folders(id,path,folderId) VALUES (?,?,?)",
+        ("wf1", str(watch_root), "root"),
+    )
+    _insert_model(conn, "m1", "tanks", str(src), storage_mode="reference", source_path=str(src))
     conn.commit()
     conn.close()
 
-    resp = client.post("/api/models/abc123/duplicate")
+    resp = client.post("/api/models/m1/duplicate")
     assert resp.status_code == 200
     new_path = Path(resp.json()["filePath"])
     # Verify all three hierarchy levels are reflected in the path
@@ -331,6 +391,40 @@ def test_duplicate_deep_folder_hierarchy_mirrors_all_segments(client, tmp_path):
 
 
 def test_duplicate_missing_folder_404s(client, tmp_path):
+    """An orphaned folderId (folder row deleted out from under the model) must
+    still 404 rather than blow up inside folder_disk_path. Written against a
+    reference-mode source because that is now the only branch that calls
+    folder_disk_path -- copy-mode duplicates derive their destination from the
+    file's own directory and so cannot reach this error path at all (see
+    test_duplicate_copy_mode_survives_orphaned_folder_id below).
+    """
+    from app.db import get_db_conn
+    watch_root = tmp_path / "watched"
+    watch_root.mkdir()
+    src = watch_root / "hull.stl"
+    src.write_text("model data")
+
+    conn = get_db_conn()
+    _insert_folder(conn, "f1", "Root")
+    conn.execute(
+        "INSERT INTO watch_folders(id,path,folderId) VALUES (?,?,?)",
+        ("wf1", str(watch_root), "f1"),
+    )
+    # Model's folderId points at a non-existent folder
+    _insert_model(conn, "m1", "nonexistent", str(src), storage_mode="reference", source_path=str(src))
+    conn.commit()
+    conn.close()
+
+    resp = client.post("/api/models/m1/duplicate")
+    assert resp.status_code == 404
+    assert "not found" in resp.json()["detail"].lower()
+
+
+def test_duplicate_copy_mode_survives_orphaned_folder_id(client, tmp_path):
+    """The flip side: a copy-mode duplicate no longer consults folder_disk_path,
+    so an orphaned folderId must not fail it -- the file's own directory is
+    all the destination information needed.
+    """
     from app.db import get_db_conn
     upload_dir = Path(os.environ["FILE_STORAGE"])
     src = upload_dir / "abc123.stl"
@@ -338,21 +432,12 @@ def test_duplicate_missing_folder_404s(client, tmp_path):
 
     conn = get_db_conn()
     _insert_folder(conn, "f1", "Root")
-    # Insert model with folderId pointing to a non-existent folder
-    conn.execute(
-        "INSERT INTO models "
-        "(id,name,folderId,url,size,dateAdded,tags,description,thumbnail,manual,author,"
-        " sourceUrl,category,colorCount,sliceSettings,sourcePath,storageMode,filePath) "
-        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-        (
-            "abc123", "abc123.stl", "nonexistent", "/api/models/abc123/download", 100, 0,
-            "[]", "", None, None, None,
-            None, None, None, None, None, "copy", str(src),
-        ),
-    )
+    _insert_model(conn, "abc123", "nonexistent", str(src), storage_mode="copy")
     conn.commit()
     conn.close()
 
     resp = client.post("/api/models/abc123/duplicate")
-    assert resp.status_code == 404
-    assert "not found" in resp.json()["detail"].lower()
+    assert resp.status_code == 200
+    new_path = Path(resp.json()["filePath"])
+    assert new_path.parent == upload_dir
+    assert new_path.exists()
