@@ -45,6 +45,31 @@ def validate_destination(new_path: str, storage_mode: str) -> Path:
     )
 
 
+def resolve_storage_mode_for_path(path: Path) -> str:
+    """Determine which containment rule applies to a real directory: "copy"
+    if it's under UPLOAD_DIR, "reference" if it's under some configured
+    watch_folders.path. Raises ValueError if it's under neither -- this
+    should only happen if the path was never a legitimate File-mode node
+    to begin with.
+    """
+    resolved = path.resolve()
+    upload_root = Path(UPLOAD_DIR).resolve()
+    if resolved == upload_root or upload_root in resolved.parents:
+        return "copy"
+    conn = get_db_conn()
+    try:
+        watch_roots = [
+            Path(row["path"]).resolve()
+            for row in conn.execute("SELECT path FROM watch_folders").fetchall()
+        ]
+    finally:
+        conn.close()
+    for root in watch_roots:
+        if resolved == root or root in resolved.parents:
+            return "reference"
+    raise ValueError(f"{path} is not inside the managed library or any watched folder")
+
+
 def find_affected_models(dir_path: str) -> list:
     """Every model row whose current file (filePath) lives at or under
     dir_path. Filters in Python rather than SQL LIKE to avoid needing to

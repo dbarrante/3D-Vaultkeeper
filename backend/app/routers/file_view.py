@@ -4,7 +4,11 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from app.services.file_view_ops import rewrite_affected_paths
+from app.services.file_view_ops import (
+    rewrite_affected_paths,
+    resolve_storage_mode_for_path,
+    validate_destination,
+)
 
 router = APIRouter(prefix="/api/file-view", tags=["file-view"])
 
@@ -22,6 +26,11 @@ def rename_folder(body: FolderRenameRequest):
     destination = source.parent / body.newName
     if destination.exists():
         raise HTTPException(status_code=409, detail=f"A folder already exists at {destination}")
+    try:
+        storage_mode = resolve_storage_mode_for_path(source)
+        validate_destination(str(destination), storage_mode)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     shutil.move(str(source), str(destination))
     rewrite_affected_paths(str(source), str(destination))
     return {"path": str(destination)}
@@ -40,6 +49,11 @@ def move_folder(body: FolderMoveRequest):
     destination = Path(body.targetPath)
     if destination.exists():
         raise HTTPException(status_code=409, detail=f"A folder already exists at {destination}")
+    try:
+        storage_mode = resolve_storage_mode_for_path(source)
+        validate_destination(str(destination), storage_mode)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     destination.parent.mkdir(parents=True, exist_ok=True)
     shutil.move(str(source), str(destination))
     rewrite_affected_paths(str(source), str(destination))
