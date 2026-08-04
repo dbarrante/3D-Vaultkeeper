@@ -414,20 +414,51 @@ const Sidebar: React.FC<SidebarProps> = ({
     }
   };
 
+  const handleFileTreeDrop = async (e: React.DragEvent, nodeId: string) => {
+    // preventDefault/stopPropagation unconditionally, before the payload
+    // guard below -- onDragOver already preventDefaults for every non-
+    // Uploads node regardless of payload, so this node is a valid drop
+    // target for ANY drag, including an OS file drag from the desktop. If
+    // that guard ran first and returned early on a non-file-view payload,
+    // an unprevented native file drop would fall through to the browser's
+    // default behavior (navigate the window to the dropped file).
+    e.preventDefault();
+    e.stopPropagation();
+    const modelId = e.dataTransfer.getData("application/x-fileview-model");
+    if (!modelId || nodeId === FILE_VIEW_UPLOADS_BUCKET_ID) return;
+    const targetDir = fileTree.realPaths.get(nodeId);
+    if (!targetDir) return;
+    const model = models.find((m) => m.id === modelId);
+    if (!model || !model.filePath) return;
+    const filename = model.filePath.split(/[\\/]/).pop() || model.name;
+    const isCopy = e.ctrlKey;
+    try {
+      if (isCopy) {
+        await api.duplicateModel(modelId);
+      } else {
+        await api.updateModelLocation(modelId, `${targetDir}/${filename}`);
+      }
+      onFileViewMutated();
+    } catch (err) {
+      console.error("File view drag operation failed:", err);
+      alert(err instanceof Error ? err.message : "Operation failed");
+    }
+  };
+
   // forwardRef mirrors CustomTreeItem's shape above -- RichTreeView's
   // slots.item passes a ref through for focus/keyboard-nav/scroll-into-view;
   // a bare function component here would silently drop it (React 18)
   // instead of forwarding it to the underlying TreeItem.
   //
-  // Also wrapped in useCallback keyed on [fileTree] (per review): without
-  // memoization the component gets a new identity on every Sidebar
+  // Also wrapped in useCallback keyed on [fileTree, models] (per review):
+  // without memoization the component gets a new identity on every Sidebar
   // re-render -- including the very re-render triggered by
   // setFolderContextMenu when the user right-clicks -- which makes MUI
   // remount tree items instead of updating them in place, partially
   // undercutting the forwardRef fix above (remounted items lose focus/DOM
-  // identity anyway). The closure only reads handleFileTreeContextMenu,
-  // which itself only reads fileTree.realPaths, so [fileTree] is the
-  // correct (and only) dependency.
+  // identity anyway). The closure reads handleFileTreeContextMenu (which
+  // reads fileTree.realPaths) and handleFileTreeDrop (which additionally
+  // reads models), so [fileTree, models] is the correct dependency list.
   const FileViewTreeItem = React.useCallback(
     React.forwardRef(function FileViewTreeItem(
       props: TreeItemProps,
@@ -438,10 +469,14 @@ const Sidebar: React.FC<SidebarProps> = ({
           {...props}
           ref={ref}
           onContextMenu={(e) => handleFileTreeContextMenu(e, props.itemId)}
+          onDragOver={(e) => {
+            if (props.itemId !== FILE_VIEW_UPLOADS_BUCKET_ID) e.preventDefault();
+          }}
+          onDrop={(e) => handleFileTreeDrop(e, props.itemId)}
         />
       );
     }),
-    [fileTree],
+    [fileTree, models],
   );
 
   interface CustomLabelProps extends UseTreeItemLabelSlotOwnProps {
@@ -700,6 +735,28 @@ const Sidebar: React.FC<SidebarProps> = ({
           }}
         >
           Rename
+        </MenuItem>
+        <MenuItem
+          onClick={() => {
+            if (folderContextMenu) {
+              const targetParent = window.prompt(
+                "Move to which real folder path? (paste the full destination directory)",
+                folderContextMenu.realPath,
+              );
+              if (targetParent && targetParent !== folderContextMenu.realPath) {
+                api
+                  .moveFileViewFolder(folderContextMenu.realPath, targetParent)
+                  .then(onFileViewMutated)
+                  .catch((err) => {
+                    console.error("Folder move failed:", err);
+                    alert(err instanceof Error ? err.message : "Folder move failed");
+                  });
+              }
+            }
+            setFolderContextMenu(null);
+          }}
+        >
+          Move
         </MenuItem>
         <MenuItem
           onClick={() => {

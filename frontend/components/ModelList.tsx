@@ -147,6 +147,16 @@ const ModelList: React.FC<ModelListProps> = ({
     }
   };
 
+  const handleCopyFile = async (model: STLModel) => {
+    try {
+      await api.duplicateModel(model.id);
+      onFileViewMutated();
+    } catch (err) {
+      console.error("Copy failed:", err);
+      alert(err instanceof Error ? err.message : "Copy failed");
+    }
+  };
+
   const fileInputRef = useRef<HTMLInputElement>(null);
   // VirtuosoGrid virtualizes the file grid within this component's own
   // scroll container (rather than owning its own), since the header/search
@@ -344,6 +354,11 @@ const ModelList: React.FC<ModelListProps> = ({
   };
 
   const handleCardDragStart = (e: React.DragEvent, modelId: string) => {
+    if (viewMode === "file") {
+      e.dataTransfer.setData("application/x-fileview-model", modelId);
+      e.dataTransfer.effectAllowed = "copyMove";
+      return;
+    }
     // If the user drags a card, we initiate a move operation
     const idsToMove = selectedIds.has(modelId)
       ? Array.from(selectedIds)
@@ -932,6 +947,14 @@ const ModelList: React.FC<ModelListProps> = ({
           }}
         >
           Rename
+        </MenuItem>
+        <MenuItem
+          onClick={() => {
+            if (fileContextMenu) handleCopyFile(fileContextMenu.model);
+            setFileContextMenu(null);
+          }}
+        >
+          Copy
         </MenuItem>
         <MenuItem
           onClick={() => {
