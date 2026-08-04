@@ -23,6 +23,7 @@ const ImportWizard: React.FC<ImportWizardProps> = ({
 }) => {
   const [tree, setTree] = useState<ImportTreeNode | null>(null);
   const [treeError, setTreeError] = useState<string | null>(null);
+  const [commitError, setCommitError] = useState<string | null>(null);
   const [folders, setFolders] = useState<Folder[]>(initialFolders);
   const [placements, setPlacements] = useState<StagedPlacement[]>([]);
   const [creatingUnderId, setCreatingUnderId] = useState<string | null>(null);
@@ -67,6 +68,7 @@ const ImportWizard: React.FC<ImportWizardProps> = ({
 
   const runCommit = async (toCommit: StagedPlacement[]) => {
     setCommitting(true);
+    setCommitError(null);
     try {
       const newResults = await api.commitImport(
         toCommit.map(({ sourcePath, isFolder, targetFolderId }) => ({ sourcePath, isFolder, targetFolderId })),
@@ -76,9 +78,11 @@ const ImportWizard: React.FC<ImportWizardProps> = ({
         ...newResults,
       ]);
       setStep("results");
-      if (newResults.every((r) => r.status === "ok")) {
+      if (newResults.some((r) => r.status === "ok")) {
         onComplete();
       }
+    } catch (e: any) {
+      setCommitError(e.message || "Failed to commit — check your connection and try again");
     } finally {
       setCommitting(false);
     }
@@ -202,6 +206,7 @@ const ImportWizard: React.FC<ImportWizardProps> = ({
                 </div>
               ))}
             </div>
+            {commitError && <p className="text-red-400 text-sm mt-2">{commitError}</p>}
             <div className="flex justify-between mt-4">
               <button onClick={() => setStep("stage")} className="text-slate-400 px-4 py-2">Back</button>
               <button
@@ -236,6 +241,7 @@ const ImportWizard: React.FC<ImportWizardProps> = ({
                 );
               })}
             </div>
+            {commitError && <p className="text-red-400 text-sm mt-2">{commitError}</p>}
             <div className="flex justify-between mt-4">
               <button onClick={onClose} className="text-slate-400 px-4 py-2">Close</button>
               {results.some((r) => r.status === "error") && (
