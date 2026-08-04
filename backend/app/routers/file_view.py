@@ -1,13 +1,16 @@
+import os
 import shutil
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+from app.db import get_db_conn, MANUAL_DIR
 from app.services.file_view_ops import (
     rewrite_affected_paths,
     resolve_storage_mode_for_path,
     validate_destination,
+    find_affected_models,
 )
 
 router = APIRouter(prefix="/api/file-view", tags=["file-view"])
@@ -66,3 +69,60 @@ def move_folder(body: FolderMoveRequest):
     shutil.move(str(source), str(destination))
     rewrite_affected_paths(str(source), str(destination))
     return {"path": str(destination)}
+
+
+class FolderDeleteRequest(BaseModel):
+    path: str
+
+
+@router.delete("/folder")
+def delete_folder(body: FolderDeleteRequest):
+    target = Path(body.path)
+    if not target.is_dir():
+        raise HTTPException(status_code=404, detail=f"Folder not found: {body.path}")
+
+    resolved = target.resolve()
+    if resolved.parent == resolved:
+        raise HTTPException(status_code=400, detail="Refusing to delete a drive root.")
+
+    conn = get_db_conn()
+    try:
+        watch_roots = {
+            Path(row["path"]).resolve()
+            for row in conn.execute("SELECT path FROM watch_folders").fetchall()
+        }
+    finally:
+        conn.close()
+    if resolved in watch_roots:
+        raise HTTPException(
+            status_code=400,
+            detail="Refusing to delete a watched folder's root. Remove it from Watch Folders first if you really want to delete it.",
+        )
+
+    affected = find_affected_models(str(target))
+    conn = get_db_conn()
+    deleted = 0
+    try:
+        cur = conn.cursor()
+        for row in affected:
+            try:
+                model_id = row["id"]
+                fp = row["filePath"] if "filePath" in row.keys() else None
+                if fp and os.path.exists(fp):
+                    try:
+                        os.remove(fp)
+                    except OSError:
+                        pass
+                manual_path = MANUAL_DIR / f"{model_id}.md"
+                if manual_path.exists():
+                    manual_path.unlink()
+                cur.execute("DELETE FROM models WHERE id=?", (model_id,))
+                deleted += 1
+            except Exception:
+                continue
+        conn.commit()
+    finally:
+        conn.close()
+
+    shutil.rmtree(target, ignore_errors=True)
+    return {"deletedModels": deleted, "path": str(target)}

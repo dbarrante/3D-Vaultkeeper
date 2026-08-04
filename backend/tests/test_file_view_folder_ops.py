@@ -244,6 +244,114 @@ def test_rename_folder_into_own_subfolder_rejected(client, tmp_path):
     assert sorted(p.name for p in src_dir.iterdir()) == ["hull.stl"]  # no stray "Sub" dir
 
 
+def test_delete_folder_removes_tracked_and_untracked_files(client, tmp_path):
+    from app.db import get_db_conn
+    upload_dir = Path(os.environ["FILE_STORAGE"])
+    target_dir = upload_dir / "Vehicles"
+    target_dir.mkdir()
+    tracked = target_dir / "abc.stl"
+    tracked.write_text("data")
+    untracked = target_dir / "notes.txt"
+    untracked.write_text("notes")
+
+    conn = get_db_conn()
+    _insert_folder(conn, "f1", "Root")
+    _insert_model(conn, "abc", "f1", str(tracked), storage_mode="copy")
+    conn.commit()
+    conn.close()
+
+    resp = client.request("DELETE", "/api/file-view/folder", json={"path": str(target_dir)})
+    assert resp.status_code == 200
+    assert resp.json()["deletedModels"] == 1
+    assert not target_dir.exists()
+
+    conn = get_db_conn()
+    count = conn.execute("SELECT COUNT(*) c FROM models WHERE id='abc'").fetchone()["c"]
+    conn.close()
+    assert count == 0
+
+
+def test_delete_folder_reference_mode_hard_deletes_not_tombstones(client, tmp_path):
+    from app.db import get_db_conn
+    watch_root = tmp_path / "watched"
+    sub = watch_root / "Prints"
+    sub.mkdir(parents=True)
+    f1 = sub / "hull.stl"
+    f1.write_text("data")
+
+    conn = get_db_conn()
+    _insert_folder(conn, "f1", "Root")
+    conn.execute(
+        "INSERT INTO watch_folders(id,path,folderId) VALUES (?,?,?)",
+        ("wf1", str(watch_root), "f1"),
+    )
+    _insert_model(conn, "m1", "f1", str(f1), storage_mode="reference", source_path=str(f1))
+    conn.commit()
+    conn.close()
+
+    resp = client.request("DELETE", "/api/file-view/folder", json={"path": str(sub)})
+    assert resp.status_code == 200
+
+    conn = get_db_conn()
+    count = conn.execute("SELECT COUNT(*) c FROM models WHERE id='m1'").fetchone()["c"]
+    conn.close()
+    assert count == 0, "reference-mode row must be hard-deleted, not tombstoned, from File view"
+    assert not f1.exists()
+
+
+def test_delete_folder_refuses_drive_root(client, tmp_path):
+    drive_root = Path(tmp_path.anchor)
+    resp = client.request("DELETE", "/api/file-view/folder", json={"path": str(drive_root)})
+    assert resp.status_code == 400
+    assert drive_root.exists()
+
+
+def test_delete_folder_refuses_watch_folder_root(client, tmp_path):
+    from app.db import get_db_conn
+    watch_root = tmp_path / "watched"
+    watch_root.mkdir()
+
+    conn = get_db_conn()
+    _insert_folder(conn, "f1", "Root")
+    conn.execute(
+        "INSERT INTO watch_folders(id,path,folderId) VALUES (?,?,?)",
+        ("wf1", str(watch_root), "f1"),
+    )
+    conn.commit()
+    conn.close()
+
+    resp = client.request("DELETE", "/api/file-view/folder", json={"path": str(watch_root)})
+    assert resp.status_code == 400
+    assert watch_root.exists()
+
+
+def test_delete_folder_allows_subfolder_of_watch_root(client, tmp_path):
+    from app.db import get_db_conn
+    watch_root = tmp_path / "watched"
+    sub = watch_root / "Old"
+    sub.mkdir(parents=True)
+
+    conn = get_db_conn()
+    _insert_folder(conn, "f1", "Root")
+    conn.execute(
+        "INSERT INTO watch_folders(id,path,folderId) VALUES (?,?,?)",
+        ("wf1", str(watch_root), "f1"),
+    )
+    conn.commit()
+    conn.close()
+
+    resp = client.request("DELETE", "/api/file-view/folder", json={"path": str(sub)})
+    assert resp.status_code == 200
+    assert not sub.exists()
+    assert watch_root.exists()
+
+
+def test_delete_nonexistent_folder_404s(client, tmp_path):
+    upload_dir = Path(os.environ["FILE_STORAGE"])
+    resp = client.request("DELETE", "/api/file-view/folder", json={"path": str(upload_dir / "Nope")})
+    assert resp.status_code == 404
+
+
 def test_move_folder_into_own_subtree_rejected(client, tmp_path):
     """Moving "Tanks" to a targetPath nested inside "Tanks" itself
     (e.g. UPLOAD_DIR/Tanks/Sub/Tanks) must be rejected before
