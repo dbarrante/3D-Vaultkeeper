@@ -88,6 +88,7 @@ const ImportWizard: React.FC<ImportWizardProps> = ({
       onDragOver={(e) => e.preventDefault()}
       onDrop={(e) => {
         e.preventDefault();
+        e.stopPropagation();
         const data = e.dataTransfer.getData("text/plain");
         if (!data) return;
         const { path, isFolder } = JSON.parse(data);
