@@ -149,25 +149,34 @@ const App = () => {
 
   // One card per folder in ModelList shows a representative thumbnail +
   // part count instead of a plain folder icon when the folder has models
-  // directly inside (see ModelList.tsx's folder-tile rendering) — this is
-  // built the same way Sidebar.tsx's own folderCounts already counts
-  // direct children from the full models array, extended to also track
-  // whichever direct child was added first (smallest dateAdded) as the
-  // representative thumbnail. A plain const, not useMemo, to match this
-  // component's existing filteredModels/filteredFolders right above it.
+  // directly inside (see ModelList.tsx's folder-tile rendering). The
+  // representative thumbnail is the earliest-added model that actually HAS
+  // a thumbnail -- watch-folder-scanned models never get one (thumbnails
+  // are only ever generated client-side, on manual upload/replace), so
+  // preferring strict chronological order regardless of thumbnail presence
+  // made every scanner-created folder (the primary audience for this
+  // feature) permanently show a plain folder icon instead. A plain const,
+  // not useMemo, to match this component's existing
+  // filteredModels/filteredFolders right above it. (Sidebar.tsx's own
+  // similarly-named folderCounts memo also counts subfolders, not just
+  // models -- this deliberately counts direct model children only, since
+  // it's answering "how many parts does this print have," not "how many
+  // things are inside this folder," so the two counts can legitimately
+  // differ for the same folder.)
   const folderPreviews: Record<string, { count: number; thumbnail: string | null }> = {};
-  const earliestDateAddedByFolder: Record<string, number> = {};
+  const earliestThumbnailDateAddedByFolder: Record<string, number> = {};
   models.forEach((m) => {
     if (!folderPreviews[m.folderId]) {
       folderPreviews[m.folderId] = { count: 0, thumbnail: null };
     }
     folderPreviews[m.folderId].count += 1;
     if (
-      earliestDateAddedByFolder[m.folderId] === undefined ||
-      m.dateAdded < earliestDateAddedByFolder[m.folderId]
+      m.thumbnail &&
+      (earliestThumbnailDateAddedByFolder[m.folderId] === undefined ||
+        m.dateAdded < earliestThumbnailDateAddedByFolder[m.folderId])
     ) {
-      earliestDateAddedByFolder[m.folderId] = m.dateAdded;
-      folderPreviews[m.folderId].thumbnail = m.thumbnail || null;
+      earliestThumbnailDateAddedByFolder[m.folderId] = m.dateAdded;
+      folderPreviews[m.folderId].thumbnail = m.thumbnail;
     }
   });
 
