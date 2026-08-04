@@ -76,6 +76,33 @@ export enum ViewMode {
   LIST = "LIST",
 }
 
+export interface ImportTreeNode {
+  name: string;
+  path: string;
+  folders: ImportTreeNode[];
+  files: { name: string; path: string; isModel: boolean; size: number }[];
+}
+
+// Sentinel folder id for File-mode's synthetic bucket holding models whose
+// filePath has no real subdirectory structure to group by (pre-feature flat
+// copy-mode uploads). Shared between Sidebar.tsx (Task 9, builds this node)
+// and App.tsx (Task 10, filters by it) so the two never drift apart.
+export const FILE_VIEW_UPLOADS_BUCKET_ID = "__uploads__";
+
+export interface ImportPlacement {
+  sourcePath: string;
+  isFolder: boolean;
+  targetFolderId: string;
+}
+
+export interface ImportResult {
+  sourcePath: string;
+  placementSourcePath: string;
+  status: "ok" | "error";
+  error?: string;
+  isModel: boolean;
+}
+
 export type AppState = {
   folders: Folder[];
   models: STLModel[];

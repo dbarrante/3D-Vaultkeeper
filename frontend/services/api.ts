@@ -5,6 +5,9 @@ import {
   STLModelCollection,
   WatchFolder,
   InboxItem,
+  ImportTreeNode,
+  ImportPlacement,
+  ImportResult,
 } from "../types";
 
 // The Docker image bakes VITE_API_URL as the literal placeholder token
@@ -261,6 +264,27 @@ export const api = {
     });
     if (!res.ok) throw new Error("Import failed");
     return res.json();
+  },
+
+  // Import Wizard: read-only tree peek
+  getImportTree: async (path: string): Promise<ImportTreeNode> => {
+    const res = await fetch(
+      `${getApiBaseUrl()}/import/tree?path=${encodeURIComponent(path)}`,
+    );
+    if (!res.ok) throw new Error("Failed to read directory");
+    return res.json();
+  },
+
+  // Import Wizard: commit staged placements
+  commitImport: async (placements: ImportPlacement[]): Promise<ImportResult[]> => {
+    const res = await fetch(`${getApiBaseUrl()}/import/commit`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ placements }),
+    });
+    if (!res.ok) throw new Error("Import commit failed");
+    const body = await res.json();
+    return body.results;
   },
 
   // 13. IMPORT FROM URL
