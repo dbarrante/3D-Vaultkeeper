@@ -296,3 +296,52 @@ def test_scan_watch_folder_reuses_existing_folder_on_rescan(client, tmp_path):
     print_a_folders = conn.execute("SELECT id FROM folders WHERE name='PrintA'").fetchall()
     conn.close()
     assert len(print_a_folders) == 1
+
+
+def test_scan_watch_folder_survives_folder_resolution_failure(client, tmp_path, monkeypatch):
+    """Folder resolution (get_or_create_folder) now runs inside the same
+    try/except as ingestion -- a DB error resolving one file's folder chain
+    (e.g. "database is locked") must not abort the whole scan or skip the
+    lastScanAt update, the same guarantee the pre-existing crash-survival
+    test already covers for ingest_file itself."""
+    import app.services.scan as scan_module
+    from app.services.scan import scan_watch_folder
+    from app.db import get_db_conn, now_ms
+
+    watched_dir = tmp_path / "watched"
+    watched_dir.mkdir()
+    bad = watched_dir / "BadPrint"
+    bad.mkdir()
+    (bad / "part1.stl").write_bytes(b"solid part1 endsolid")
+    (watched_dir / "loose.stl").write_bytes(b"solid loose endsolid")
+
+    real_get_or_create_folder = scan_module.get_or_create_folder
+
+    def flaky_get_or_create_folder(name, parent_id):
+        if name == "BadPrint":
+            raise Exception("database is locked")
+        return real_get_or_create_folder(name, parent_id)
+
+    monkeypatch.setattr(scan_module, "get_or_create_folder", flaky_get_or_create_folder)
+
+    conn = get_db_conn()
+    conn.execute(
+        "INSERT INTO watch_folders(id,path,folderId,frequencyMinutes,lastScanAt,enabled) VALUES (?,?,?,?,?,?)",
+        ("wf1", str(watched_dir), "1", 60, None, 1),
+    )
+    conn.commit()
+    row = dict(conn.execute("SELECT * FROM watch_folders WHERE id=?", ("wf1",)).fetchone())
+    conn.close()
+
+    before = now_ms()
+    ingested = scan_watch_folder(row)
+
+    assert ingested == 1  # loose.stl ingested; BadPrint/part1.stl skipped
+
+    conn = get_db_conn()
+    models = {m["name"] for m in conn.execute("SELECT name FROM models")}
+    updated = conn.execute("SELECT lastScanAt FROM watch_folders WHERE id=?", ("wf1",)).fetchone()
+    conn.close()
+
+    assert models == {"loose.stl"}
+    assert updated["lastScanAt"] >= before  # lastScanAt still updates despite the partial failure
