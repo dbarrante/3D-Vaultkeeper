@@ -233,3 +233,66 @@ def test_get_or_create_folder_reuses_existing_top_level_folder(client):
     ).fetchone()["c"]
     conn.close()
     assert count == 1
+
+
+def test_scan_watch_folder_mirrors_subdirectory_structure(client, tmp_path):
+    from app.services.scan import scan_watch_folder
+    from app.db import get_db_conn
+
+    watched_dir = tmp_path / "watched"
+    watched_dir.mkdir()
+    (watched_dir / "loose.stl").write_bytes(b"solid loose endsolid")
+    print_a = watched_dir / "PrintA"
+    print_a.mkdir()
+    (print_a / "part1.stl").write_bytes(b"solid part1 endsolid")
+    (print_a / "part2.stl").write_bytes(b"solid part2 endsolid")
+    supports = print_a / "supports"
+    supports.mkdir()
+    (supports / "support1.stl").write_bytes(b"solid support1 endsolid")
+
+    row = {"id": "wf1", "path": str(watched_dir), "folderId": "1"}
+    ingested = scan_watch_folder(row)
+    assert ingested == 4
+
+    conn = get_db_conn()
+    folders = {f["name"]: dict(f) for f in conn.execute("SELECT id, name, parentId FROM folders")}
+    models = {m["name"]: dict(m) for m in conn.execute("SELECT name, folderId FROM models")}
+    conn.close()
+
+    assert "PrintA" in folders
+    print_a_folder = folders["PrintA"]
+    assert print_a_folder["parentId"] == "1"
+
+    assert "supports" in folders
+    supports_folder = folders["supports"]
+    assert supports_folder["parentId"] == print_a_folder["id"]
+
+    assert models["loose.stl"]["folderId"] == "1"
+    assert models["part1.stl"]["folderId"] == print_a_folder["id"]
+    assert models["part2.stl"]["folderId"] == print_a_folder["id"]
+    assert models["support1.stl"]["folderId"] == supports_folder["id"]
+
+
+def test_scan_watch_folder_reuses_existing_folder_on_rescan(client, tmp_path):
+    """A second scan tick that finds the same subdirectory again (e.g. a
+    new file dropped into an already-mirrored PrintA folder) reuses the
+    folder created on the first tick, not "PrintA (2)"."""
+    from app.services.scan import scan_watch_folder
+    from app.db import get_db_conn
+
+    watched_dir = tmp_path / "watched"
+    watched_dir.mkdir()
+    print_a = watched_dir / "PrintA"
+    print_a.mkdir()
+    (print_a / "part1.stl").write_bytes(b"solid part1 endsolid")
+
+    row = {"id": "wf1", "path": str(watched_dir), "folderId": "1"}
+    scan_watch_folder(row)
+
+    (print_a / "part2.stl").write_bytes(b"solid part2 endsolid")
+    scan_watch_folder(row)
+
+    conn = get_db_conn()
+    print_a_folders = conn.execute("SELECT id FROM folders WHERE name='PrintA'").fetchall()
+    conn.close()
+    assert len(print_a_folders) == 1

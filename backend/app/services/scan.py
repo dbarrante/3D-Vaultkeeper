@@ -62,10 +62,23 @@ def scan_watch_folder(watch_folder_row: dict) -> int:
 
     ingested = 0
     for file_path in find_new_files(root, already_seen):
+        # A file directly in the watched root has zero relative parts and
+        # ingests straight into the target folder, same as before this
+        # change. A file under one or more subdirectories walks/creates a
+        # matching chain of library folders under the target, mirroring
+        # the on-disk structure at whatever depth it's found — this is
+        # what lets "PrintA/part1.stl" and "PrintA/supports/part.stl"
+        # both land under a real "PrintA" library folder instead of every
+        # file from every subdirectory being flattened into one folder.
+        relative_parts = file_path.parent.relative_to(root).parts
+        target_folder_id = watch_folder_row["folderId"]
+        for part in relative_parts:
+            target_folder_id = get_or_create_folder(part, target_folder_id)
+
         try:
             ingest_file(
                 str(file_path),
-                folder_id=watch_folder_row["folderId"],
+                folder_id=target_folder_id,
                 original_filename=file_path.name,
                 record_source=True,
                 pickup_sidecar_notes=True,
