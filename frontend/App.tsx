@@ -5,7 +5,13 @@ import DetailPanel from "./components/DetailPanel";
 import Settings from "./components/Settings";
 import Navbar from "./components/Navbar";
 import ManualModal from "./components/ManualModal";
-import { STLModel, Folder, StorageStats, STLModelCollection } from "./types";
+import {
+  STLModel,
+  Folder,
+  StorageStats,
+  STLModelCollection,
+  FILE_VIEW_UPLOADS_BUCKET_ID,
+} from "./types";
 import { generateThumbnail } from "./services/thumbnailGenerator";
 import { api, resolveApiOrigin } from "./services/api";
 import {
@@ -43,6 +49,7 @@ const App = () => {
   });
 
   const [currentFolderId, setCurrentFolderId] = useState<string>("all");
+  const [viewMode, setViewMode] = useState<"logical" | "file">("logical");
   const [currentFolderParentId, setCurrentFolderParentId] = useState("");
   const [selectedModelId, setSelectedModelId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -143,13 +150,32 @@ const App = () => {
   // checkbox -- forced a full re-render of the model list with brand-new
   // array/object references, defeating any downstream memoization by
   // reference. That measured at ~6.7s per interaction before this fix.
-  const filteredModels = useMemo(
-    () =>
-      currentFolderId === "all"
-        ? models
-        : models.filter((m) => m.folderId === currentFolderId),
-    [models, currentFolderId],
-  );
+  const filteredModels = useMemo(() => {
+    if (viewMode === "file") {
+      if (currentFolderId === "all") return models;
+      if (currentFolderId === FILE_VIEW_UPLOADS_BUCKET_ID) {
+        return models.filter((m) => {
+          if (!m.filePath) return false;
+          const normalized = m.filePath.replace(/\\/g, "/");
+          const segments = normalized.split("/").slice(0, -1);
+          return segments.length === 0 || segments[segments.length - 1].toLowerCase() === "uploads";
+        });
+      }
+      // fileTree node ids are built in Sidebar.tsx as "file/<segment>/<segment>/..."
+      // (see Task 9) -- strip that prefix to get the real path segments this
+      // node represents, then match any model whose filePath passes through
+      // that directory.
+      const prefix = currentFolderId.replace(/^file\//, "") + "/";
+      return models.filter((m) => {
+        if (!m.filePath) return false;
+        const normalized = m.filePath.replace(/\\/g, "/");
+        return normalized.includes(`/${prefix}`);
+      });
+    }
+    return currentFolderId === "all"
+      ? models
+      : models.filter((m) => m.folderId === currentFolderId);
+  }, [models, currentFolderId, viewMode]);
 
   // Filter subfolders based on selection
   const filteredFolders = useMemo(
@@ -685,6 +711,10 @@ const App = () => {
               handleUpload(files, folderId)
             }
             onOpenSettings={() => setShowSettings(true)}
+            onViewModeChange={(mode) => {
+              setViewMode(mode);
+              setCurrentFolderId("all"); // avoid a stale id from one mode being misread as the other mode's id
+            }}
             variant="desktop"
           />
         ) : (
@@ -734,6 +764,10 @@ const App = () => {
                       setShowSettings(true);
                       setIsMobileSidebarOpen(false);
                     }}
+                    onViewModeChange={(mode) => {
+                      setViewMode(mode);
+                      setCurrentFolderId("all"); // avoid a stale id from one mode being misread as the other mode's id
+                    }}
                     variant="mobile"
                   />
                 </div>
@@ -760,7 +794,7 @@ const App = () => {
               ) : (
                 <ModelList
                   models={filteredModels}
-                  folders={filteredFolders}
+                  folders={viewMode === "file" ? [] : filteredFolders}
                   folderPreviews={folderPreviews}
                   currentFolderName={currentFolderName}
                   onBackNavigation={() => {
