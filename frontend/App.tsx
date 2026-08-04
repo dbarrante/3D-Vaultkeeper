@@ -859,6 +859,8 @@ const App = () => {
                   onUploadToFolder={(folderId, files) =>
                     handleUpload(files, folderId)
                   }
+                  viewMode={viewMode}
+                  onFileViewMutated={fetchData}
                 />
               )}
 

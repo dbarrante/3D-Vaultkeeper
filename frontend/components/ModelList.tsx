@@ -72,6 +72,9 @@ interface ModelListProps {
   onNavigateFolder: (id: string) => void;
   onMoveToFolder: (folderId: string, modelIds: string[]) => void;
   onUploadToFolder: (folderId: string, files: FileList) => void;
+
+  viewMode: "logical" | "file";
+  onFileViewMutated: () => void;
 }
 
 type SortOption =
@@ -101,8 +104,49 @@ const ModelList: React.FC<ModelListProps> = ({
   onNavigateFolder,
   onMoveToFolder,
   onUploadToFolder,
+  viewMode,
+  onFileViewMutated,
 }) => {
   const [isDragging, setIsDragging] = useState(false);
+  const [fileContextMenu, setFileContextMenu] = useState<{
+    mouseX: number;
+    mouseY: number;
+    model: STLModel;
+  } | null>(null);
+
+  const handleCardContextMenu = (e: React.MouseEvent, model: STLModel) => {
+    if (viewMode !== "file") return;
+    e.preventDefault();
+    e.stopPropagation();
+    setFileContextMenu({ mouseX: e.clientX - 2, mouseY: e.clientY - 4, model });
+  };
+
+  const handleRenameFile = async (model: STLModel) => {
+    if (!model.filePath) return;
+    const currentName = model.filePath.split(/[\\/]/).pop() || model.name;
+    const newName = window.prompt("Rename file:", currentName);
+    if (!newName || newName === currentName) return;
+    const dir = model.filePath.slice(0, model.filePath.length - currentName.length);
+    try {
+      await api.updateModelLocation(model.id, `${dir}${newName}`);
+      onFileViewMutated();
+    } catch (err) {
+      console.error("Rename failed:", err);
+      alert(err instanceof Error ? err.message : "Rename failed");
+    }
+  };
+
+  const handleDeleteFile = async (model: STLModel) => {
+    if (!window.confirm(`Delete "${model.name}" from disk? This cannot be undone.`)) return;
+    try {
+      await api.deleteModel(model.id, true);
+      onFileViewMutated();
+    } catch (err) {
+      console.error("Delete failed:", err);
+      alert(err instanceof Error ? err.message : "Delete failed");
+    }
+  };
+
   const fileInputRef = useRef<HTMLInputElement>(null);
   // VirtuosoGrid virtualizes the file grid within this component's own
   // scroll container (rather than owning its own), since the header/search
@@ -633,6 +677,7 @@ const ModelList: React.FC<ModelListProps> = ({
                   <div
                   draggable={true}
                   onDragStart={(e) => handleCardDragStart(e, model.id)}
+                  onContextMenu={(e) => handleCardContextMenu(e, model)}
                   onClick={() => {
                     if (selectionMode) {
                       onToggleSelection(model.id);
@@ -871,6 +916,32 @@ const ModelList: React.FC<ModelListProps> = ({
           </div>
         </div>
       )}
+
+      <Menu
+        open={fileContextMenu !== null}
+        onClose={() => setFileContextMenu(null)}
+        anchorReference="anchorPosition"
+        anchorPosition={
+          fileContextMenu ? { top: fileContextMenu.mouseY, left: fileContextMenu.mouseX } : undefined
+        }
+      >
+        <MenuItem
+          onClick={() => {
+            if (fileContextMenu) handleRenameFile(fileContextMenu.model);
+            setFileContextMenu(null);
+          }}
+        >
+          Rename
+        </MenuItem>
+        <MenuItem
+          onClick={() => {
+            if (fileContextMenu) handleDeleteFile(fileContextMenu.model);
+            setFileContextMenu(null);
+          }}
+        >
+          Delete
+        </MenuItem>
+      </Menu>
     </div>
   );
 };

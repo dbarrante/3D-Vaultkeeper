@@ -201,6 +201,72 @@ export const api = {
     if (!res.ok) throw new Error("Delete failed");
   },
 
+  // File view: rename or move a model's physical file. Handles both
+  // rename (same directory, new filename) and move (new directory) --
+  // the backend endpoint doesn't distinguish, the caller just computes
+  // newPath differently.
+  updateModelLocation: async (id: string, newPath: string): Promise<STLModel> => {
+    const res = await fetch(`${getApiBaseUrl()}/models/${id}/location`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ newPath }),
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.detail || "Failed to move/rename file");
+    }
+    return res.json();
+  },
+
+  // File view: duplicate a model's physical file, creating a new library entry.
+  duplicateModel: async (id: string): Promise<STLModel> => {
+    const res = await fetch(`${getApiBaseUrl()}/models/${id}/duplicate`, { method: "POST" });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.detail || "Failed to duplicate file");
+    }
+    return res.json();
+  },
+
+  renameFileViewFolder: async (path: string, newName: string): Promise<{ path: string }> => {
+    const res = await fetch(`${getApiBaseUrl()}/file-view/folder/rename`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path, newName }),
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.detail || "Failed to rename folder");
+    }
+    return res.json();
+  },
+
+  moveFileViewFolder: async (sourcePath: string, targetPath: string): Promise<{ path: string }> => {
+    const res = await fetch(`${getApiBaseUrl()}/file-view/folder/move`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sourcePath, targetPath }),
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.detail || "Failed to move folder");
+    }
+    return res.json();
+  },
+
+  deleteFileViewFolder: async (path: string): Promise<{ deletedModels: number; path: string }> => {
+    const res = await fetch(`${getApiBaseUrl()}/file-view/folder`, {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path }),
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.detail || "Failed to delete folder");
+    }
+    return res.json();
+  },
+
   // 9. GET Download URL
   getDownloadUrl: (model: STLModel) => {
     return `${getApiBaseUrl()}/models/${model.id}/download`;
