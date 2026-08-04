@@ -4,12 +4,15 @@ import base64
 import tempfile
 import shutil
 from typing import Optional, List
+from pathlib import Path
 
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException
 from fastapi.responses import FileResponse
+from pydantic import BaseModel
 
 from app.db import get_db_conn, row_to_model, save_upload_file, now_ms, UPLOAD_DIR, MANUAL_DIR
 from app.services.ingestion import ingest_file
+from app.services.file_view_ops import validate_destination
 
 router = APIRouter()
 
@@ -150,6 +153,54 @@ def delete_model(model_id: str, deleteFile: bool = False):
     conn.commit()
     conn.close()
     return {"ok": True}
+
+
+class LocationUpdate(BaseModel):
+    newPath: str
+
+
+@router.patch("/api/models/{model_id}/location")
+def update_model_location(model_id: str, body: LocationUpdate):
+    conn = get_db_conn()
+    cur = conn.cursor()
+    m = cur.execute("SELECT * FROM models WHERE id=?", (model_id,)).fetchone()
+    if not m:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Model not found")
+
+    storage_mode = m["storageMode"] if "storageMode" in m.keys() else "copy"
+    if storage_mode == "reference":
+        current_path = m["sourcePath"]
+    else:
+        current_path = _resolve_copy_mode_file(model_id, m["filePath"] if "filePath" in m.keys() else None)
+    if not current_path or not os.path.exists(current_path):
+        conn.close()
+        raise HTTPException(status_code=404, detail="File not found on disk")
+
+    try:
+        destination = validate_destination(body.newPath, storage_mode)
+    except ValueError as exc:
+        conn.close()
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    if destination.exists():
+        conn.close()
+        raise HTTPException(status_code=409, detail=f"A file already exists at {destination}")
+    destination.parent.mkdir(parents=True, exist_ok=True)
+
+    shutil.move(current_path, str(destination))
+
+    if storage_mode == "reference":
+        cur.execute(
+            "UPDATE models SET filePath=?, sourcePath=? WHERE id=?",
+            (str(destination), str(destination), model_id),
+        )
+    else:
+        cur.execute("UPDATE models SET filePath=? WHERE id=?", (str(destination), model_id))
+    conn.commit()
+    row = cur.execute("SELECT * FROM models WHERE id=?", (model_id,)).fetchone()
+    conn.close()
+    return row_to_model(row)
 
 
 @router.get("/api/models/{model_id}/download")
