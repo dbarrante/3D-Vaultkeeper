@@ -1,3 +1,4 @@
+import os
 from unittest.mock import patch
 
 
@@ -46,3 +47,23 @@ def test_import_model_by_id_uses_printables_importer(client):
 def test_import_options_rejects_missing_url(client):
     response = client.post("/api/import/options", json={})
     assert response.status_code == 400
+
+
+def test_import_model_by_id_sets_file_path(client):
+    from app.db import get_db_conn, UPLOAD_DIR
+
+    with patch("app.routers.importers.printables.PrintablesImporter", return_value=_FakeImporter()):
+        response = client.post(
+            "/api/import/importid",
+            json={"source": "printables", "id": "123", "name": "Fake Model", "folderId": "1", "typeName": "stl"},
+        )
+    assert response.status_code == 200
+    model = response.json()
+
+    conn = get_db_conn()
+    row = conn.execute("SELECT filePath FROM models WHERE id=?", (model["id"],)).fetchone()
+    conn.close()
+
+    assert row["filePath"] is not None
+    assert row["filePath"] == os.path.join(str(UPLOAD_DIR), f"{model['id']}.stl")
+    assert os.path.exists(row["filePath"])

@@ -1,4 +1,6 @@
 import os
+from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -361,3 +363,166 @@ def test_commit_endpoint_empty_folder_placement_produces_no_results_and_no_error
     assert len(results) == 1
     assert results[0]["sourcePath"] == str(good)
     assert results[0]["status"] == "ok"
+
+
+def test_build_tree_skips_unreadable_subdirectory_and_still_lists_siblings(tmp_path, monkeypatch):
+    """A picked directory (e.g. a drive root) commonly contains at least
+    one inaccessible system folder (System Volume Information,
+    $RECYCLE.BIN on Windows) -- one PermissionError anywhere in the
+    recursion must not 500 the whole request. Real permission-denied
+    directories are awkward to construct portably in a test, so this
+    follows test_scan.py's flaky-monkeypatch convention (see
+    test_scan_watch_folder_survives_folder_resolution_failure) and
+    monkeypatches Path.iterdir to raise for one specific directory name."""
+    from app.services.import_wizard import build_tree
+
+    root = tmp_path / "raw"
+    root.mkdir()
+    (root / "readable.stl").write_bytes(b"solid endsolid")
+    blocked = root / "System Volume Information"
+    blocked.mkdir()
+    (blocked / "hidden.stl").write_bytes(b"solid endsolid")
+
+    real_iterdir = Path.iterdir
+
+    def flaky_iterdir(self):
+        if self.name == "System Volume Information":
+            raise PermissionError(f"Access denied: {self}")
+        return real_iterdir(self)
+
+    monkeypatch.setattr(Path, "iterdir", flaky_iterdir)
+
+    tree = build_tree(root)  # must not raise
+
+    assert any(f["name"] == "readable.stl" for f in tree["files"])
+    blocked_folder = next(f for f in tree["folders"] if f["name"] == "System Volume Information")
+    assert blocked_folder["folders"] == []
+    assert blocked_folder["files"] == []
+
+
+def test_build_tree_guards_against_symlink_cycle(tmp_path, monkeypatch):
+    """A symlink cycle must not cause unbounded recursion. Directory
+    symlinks require elevated privileges to create on Windows, so a real
+    symlink loop isn't portable to construct here; instead this
+    monkeypatches Path.resolve so a subdirectory's resolved identity
+    matches an already-visited ancestor, the same condition a real
+    symlink-back-to-a-parent would produce, and verifies build_tree's
+    _visited tracking stops the walk there rather than recursing.
+    Note: because the on-disk "loop" directory here is otherwise empty,
+    this proves the cycle-detection short-circuits on a repeated resolved
+    path (the actual mechanism guarding against unbounded recursion) --
+    it doesn't reproduce true unbounded recursion via a live filesystem
+    symlink loop, which wasn't reliably constructible in this
+    environment."""
+    from app.services.import_wizard import build_tree
+
+    root = tmp_path / "raw"
+    root.mkdir()
+    (root / "file.stl").write_bytes(b"solid endsolid")
+    loop = root / "loop"
+    loop.mkdir()
+
+    root_real = root.resolve()
+    real_resolve = Path.resolve
+
+    def fake_resolve(self, *args, **kwargs):
+        if self.name == "loop":
+            return root_real  # simulate a symlink pointing back to an ancestor
+        return real_resolve(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "resolve", fake_resolve)
+
+    tree = build_tree(root)  # must terminate
+
+    loop_folder = next(f for f in tree["folders"] if f["name"] == "loop")
+    assert loop_folder["folders"] == []
+    assert loop_folder["files"] == []
+
+
+def test_commit_endpoint_per_file_failure_in_folder_placement_does_not_block_sibling(client, tmp_path):
+    """Existing coverage (test_commit_endpoint_one_bad_placement_does_not_block_a_sibling_placement)
+    only proves isolation across separate *placements*. This proves the
+    narrower, spec-named case: two files inside the *same* folder
+    placement, one fails, the other must still succeed -- both tagged
+    with the same placementSourcePath."""
+    from app.db import get_db_conn
+    from app.services import import_wizard as iw_module
+
+    conn = get_db_conn()
+    conn.execute("INSERT INTO folders(id,name,parentId) VALUES (?,?,?)", ("f1", "Vehicles", None))
+    conn.commit()
+    conn.close()
+
+    kit = tmp_path / "Tank Kit"
+    kit.mkdir()
+    good = kit / "good.stl"
+    good.write_bytes(b"solid endsolid")
+    bad = kit / "bad.stl"
+    bad.write_bytes(b"solid endsolid")
+
+    real_commit_placement_file = iw_module.commit_placement_file
+
+    def flaky_commit_placement_file(file_path, target_folder_id):
+        if file_path.name == "bad.stl":
+            return {"sourcePath": str(file_path), "status": "error", "error": "simulated failure", "isModel": True}
+        return real_commit_placement_file(file_path, target_folder_id)
+
+    with patch("app.routers.import_wizard.commit_placement_file", side_effect=flaky_commit_placement_file):
+        resp = client.post("/api/import/commit", json={
+            "placements": [
+                {"sourcePath": str(kit), "isFolder": True, "targetFolderId": "f1"},
+            ]
+        })
+
+    assert resp.status_code == 200
+    results = resp.json()["results"]
+    assert len(results) == 2
+    statuses = {r["sourcePath"]: r["status"] for r in results}
+    assert statuses[str(good)] == "ok"
+    assert statuses[str(bad)] == "error"
+    assert all(r["placementSourcePath"] == str(kit) for r in results)
+
+
+def test_commit_endpoint_traversal_shaped_folder_name_stays_inside_upload_dir(client, tmp_path):
+    """String-level coverage (test_sanitize_path_segment_*) only checks
+    sanitize_path_segment's output in isolation. This goes through the
+    real POST /api/import/commit endpoint with a folder literally named
+    ".." (and a slash-bearing "../../etc") and confirms the resulting
+    filePath -- read back from the DB -- still resolves to a location
+    inside UPLOAD_DIR, not somewhere it escaped to via path traversal.
+    ".." alone exercises sanitize_path_segment's strip(" ."); the
+    slash-bearing name additionally exercises its illegal-character
+    substitution (a bare strip(" .") would leave the slashes intact and
+    let os.path.join treat them as extra path segments)."""
+    from app.db import get_db_conn, UPLOAD_DIR
+
+    conn = get_db_conn()
+    conn.execute("INSERT INTO folders(id,name,parentId) VALUES (?,?,?)", ("f1", "..", None))
+    conn.execute("INSERT INTO folders(id,name,parentId) VALUES (?,?,?)", ("f2", "../../etc", None))
+    conn.commit()
+    conn.close()
+
+    source1 = tmp_path / "evil.stl"
+    source1.write_bytes(b"solid endsolid")
+    source2 = tmp_path / "evil2.stl"
+    source2.write_bytes(b"solid endsolid")
+
+    resp = client.post("/api/import/commit", json={
+        "placements": [
+            {"sourcePath": str(source1), "isFolder": False, "targetFolderId": "f1"},
+            {"sourcePath": str(source2), "isFolder": False, "targetFolderId": "f2"},
+        ]
+    })
+
+    assert resp.status_code == 200
+    results = resp.json()["results"]
+    assert all(r["status"] == "ok" for r in results)
+
+    conn = get_db_conn()
+    row1 = conn.execute("SELECT filePath FROM models WHERE folderId=?", ("f1",)).fetchone()
+    row2 = conn.execute("SELECT filePath FROM models WHERE folderId=?", ("f2",)).fetchone()
+    conn.close()
+
+    upload_root = Path(UPLOAD_DIR).resolve()
+    assert Path(row1["filePath"]).resolve().is_relative_to(upload_root)
+    assert Path(row2["filePath"]).resolve().is_relative_to(upload_root)

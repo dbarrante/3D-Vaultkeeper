@@ -251,3 +251,49 @@ def test_replace_model_file_removes_old_subdirectory_file_and_updates_filepath(c
     # Download now serves the new flat file, confirming filePath resolution works
     download = client.get(f"/api/models/{model['id']}/download")
     assert download.content == b"solid replacement content endsolid"
+
+
+def test_bulk_delete_with_unmatched_id_deletes_nothing_from_upload_dir(client, tmp_path):
+    """A bulk-delete id that matches no row (e.g. a stale/empty id from a
+    race with another delete) must not fall through to the flat
+    os.listdir(UPLOAD_DIR) + startswith("") scan and remove an unrelated
+    file -- an empty model_id would match every filename via
+    "".startswith(...), deleting the first entry regardless of what it is."""
+    from app.db import UPLOAD_DIR
+    import os as _os
+
+    kept = _upload(client, "kept.stl")
+    before = set(_os.listdir(UPLOAD_DIR))
+    assert any(f.startswith(kept["id"]) for f in before)
+
+    response = client.post("/api/models/bulk-delete", json={"ids": [""]})
+    assert response.status_code == 200
+
+    after = set(_os.listdir(UPLOAD_DIR))
+    assert after == before
+    listed = client.get("/api/models", params={"folderId": "1"}).json()
+    assert any(m["id"] == kept["id"] for m in listed)
+
+
+def test_resolve_copy_mode_file_never_returns_a_directory(client, tmp_path):
+    """If a real subdirectory (e.g. an Import Wizard logical folder, or
+    manuals/) happens to share a name prefix with a model id, the flat
+    fallback scan in _resolve_copy_mode_file must never resolve to that
+    directory -- only an actual file. Otherwise download_model would hand
+    a directory path to FileResponse."""
+    from app.routers.models import _resolve_copy_mode_file
+    from app.db import UPLOAD_DIR
+    import os as _os
+
+    model = _upload(client, "real.stl")
+    model_id = model["id"]
+
+    # A directory whose name starts with the same id prefix, placed
+    # alongside the real flat file in UPLOAD_DIR.
+    conflicting_dir = _os.path.join(UPLOAD_DIR, f"{model_id}-conflict-dir")
+    _os.makedirs(conflicting_dir, exist_ok=True)
+
+    resolved = _resolve_copy_mode_file(model_id, None)
+    assert resolved is not None
+    assert _os.path.isfile(resolved)
+    assert not _os.path.isdir(resolved)
