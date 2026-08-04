@@ -478,48 +478,52 @@ const Sidebar: React.FC<SidebarProps> = ({
       </div>
 
       <nav className="flex-1 overflow-y-auto px-2 space-y-0.5 scrollbar-thin scrollbar-thumb-vault-700 scrollbar-track-transparent overflow-y-scroll">
-        <div className="px-4 mb-4">
-          <Button
-            fullWidth
-            startIcon={<Plus />}
-            onClick={() => {
-              setIsCreatingRoot(true);
-              document.getElementById("folder-name-input").focus();
-            }}
-            variant="outlined"
-          >
-            New Root Folder
-          </Button>
-        </div>
+        {viewMode === "logical" && (
+          <>
+            <div className="px-4 mb-4">
+              <Button
+                fullWidth
+                startIcon={<Plus />}
+                onClick={() => {
+                  setIsCreatingRoot(true);
+                  document.getElementById("folder-name-input").focus();
+                }}
+                variant="outlined"
+              >
+                New Root Folder
+              </Button>
+            </div>
 
-        <form
-          onSubmit={handleCreateFolderSubmit}
-          className={`px-4 mb-4 transition-all duration-400 ${
-            isCreatingRoot ? "opacity-100" : "opacity-0 origin-top h-0"
-          }`}
-        >
-          <div className="flex items-center gap-1 mb-3">
-            <OutlinedInput
-              id="folder-name-input"
-              type="text"
-              className="w-full"
-              placeholder="Folder Name..."
-              value={newRootName}
-              onChange={(e) => setNewRootName(e.target.value)}
-              onBlur={() => {
-                !newRootName.trim();
-                setIsCreatingRoot(false);
-                setCreatingSubfolderId("");
-              }}
-              onKeyDown={(e) => {
-                if (e.key === "Escape") {
-                  setIsCreatingRoot(false);
-                  setCreatingSubfolderId("");
-                }
-              }}
-            />
-          </div>
-        </form>
+            <form
+              onSubmit={handleCreateFolderSubmit}
+              className={`px-4 mb-4 transition-all duration-400 ${
+                isCreatingRoot ? "opacity-100" : "opacity-0 origin-top h-0"
+              }`}
+            >
+              <div className="flex items-center gap-1 mb-3">
+                <OutlinedInput
+                  id="folder-name-input"
+                  type="text"
+                  className="w-full"
+                  placeholder="Folder Name..."
+                  value={newRootName}
+                  onChange={(e) => setNewRootName(e.target.value)}
+                  onBlur={() => {
+                    !newRootName.trim();
+                    setIsCreatingRoot(false);
+                    setCreatingSubfolderId("");
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Escape") {
+                      setIsCreatingRoot(false);
+                      setCreatingSubfolderId("");
+                    }
+                  }}
+                />
+              </div>
+            </form>
+          </>
+        )}
 
         <Button
           variant="contained"
