@@ -105,11 +105,13 @@ def init_db() -> None:
         ("sourcePath", "TEXT"),
         ("storageMode", "TEXT NOT NULL DEFAULT 'copy'"),
         ("removedAt", "INTEGER"),
+        ("filePath", "TEXT"),
     ]:
         try:
             cur.execute(f"ALTER TABLE models ADD COLUMN {column} {coltype}")
         except sqlite3.OperationalError:
             pass
+    _backfill_file_paths(cur)
     cur.execute(
         """
         CREATE TABLE IF NOT EXISTS watch_folders (
@@ -153,6 +155,35 @@ def init_db() -> None:
     conn.close()
 
 
+def _backfill_file_paths(cur: sqlite3.Cursor) -> None:
+    """One-time backfill for filePath on upgrade: the column starts NULL
+    for every pre-existing row until this runs once. Reference-mode rows
+    just mirror sourcePath -- the app never moves those files, so it's
+    already their real location. Copy-mode rows are matched to their flat
+    UPLOAD_DIR file using the same model-id-prefix convention the download
+    endpoint (routers/models.py) already uses to locate them. Guarded by
+    `filePath IS NULL` throughout, so re-running init_db() after the first
+    successful backfill is a no-op.
+    """
+    cur.execute(
+        "UPDATE models SET filePath = sourcePath "
+        "WHERE storageMode = 'reference' AND filePath IS NULL AND sourcePath IS NOT NULL"
+    )
+    rows = cur.execute(
+        "SELECT id FROM models WHERE storageMode = 'copy' AND filePath IS NULL"
+    ).fetchall()
+    if rows and UPLOAD_DIR.is_dir():
+        existing_files = os.listdir(UPLOAD_DIR)
+        for row in rows:
+            model_id = row["id"]
+            match = next((f for f in existing_files if f.startswith(model_id)), None)
+            if match:
+                cur.execute(
+                    "UPDATE models SET filePath = ? WHERE id = ?",
+                    (str(UPLOAD_DIR / match), model_id),
+                )
+
+
 def now_ms() -> int:
     return int(time.time() * 1000)
 
@@ -170,6 +201,7 @@ def row_to_model(row: sqlite3.Row) -> Dict[str, Any]:
             tags = []
     storage_mode = row["storageMode"] if "storageMode" in row.keys() else "copy"
     source_path = row["sourcePath"] if "sourcePath" in row.keys() else None
+    file_path = row["filePath"] if "filePath" in row.keys() else None
     missing = storage_mode == "reference" and bool(source_path) and not os.path.exists(source_path)
     return {
         "id": row["id"],
@@ -189,6 +221,7 @@ def row_to_model(row: sqlite3.Row) -> Dict[str, Any]:
         "sliceSettings": row["sliceSettings"] if "sliceSettings" in row.keys() else None,
         "sourcePath": source_path,
         "storageMode": storage_mode,
+        "filePath": file_path,
         "missing": missing,
     }
 

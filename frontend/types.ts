@@ -37,6 +37,7 @@ export interface STLModel {
   storageMode?: "copy" | "reference";
   missing?: boolean;
   sourcePath?: string | null;
+  filePath?: string | null;
 }
 
 export interface STLModelCollection {
