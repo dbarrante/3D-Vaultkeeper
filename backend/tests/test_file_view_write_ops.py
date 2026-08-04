@@ -281,6 +281,11 @@ def test_duplicate_reference_mode_file_becomes_copy_mode(client, tmp_path):
     assert new_model["storageMode"] == "copy"
     assert new_model["sourcePath"] is None
     assert Path(new_model["filePath"]).resolve().is_relative_to(upload_dir.resolve())
+    # Pin the actual destination, not just "somewhere under UPLOAD_DIR": the
+    # reference branch is the one that still mirrors folder_disk_path, so this
+    # asserts the "Root" segment really is applied rather than the copy landing
+    # at the bare UPLOAD_DIR root and passing the containment check vacuously.
+    assert Path(new_model["filePath"]).parent == upload_dir / "Root"
     assert os.path.exists(new_model["filePath"])
     assert src.exists(), "original watched file must be untouched"
 
