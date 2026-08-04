@@ -3,6 +3,7 @@ import json
 import base64
 import tempfile
 import shutil
+import uuid
 from typing import Optional, List
 from pathlib import Path
 
@@ -13,6 +14,7 @@ from pydantic import BaseModel
 from app.db import get_db_conn, row_to_model, save_upload_file, now_ms, UPLOAD_DIR, MANUAL_DIR
 from app.services.ingestion import ingest_file
 from app.services.file_view_ops import validate_destination
+from app.services.import_wizard import folder_disk_path
 
 router = APIRouter()
 
@@ -211,6 +213,67 @@ def update_model_location(model_id: str, body: LocationUpdate):
             raise
 
         row = cur.execute("SELECT * FROM models WHERE id=?", (model_id,)).fetchone()
+        return row_to_model(row)
+    finally:
+        conn.close()
+
+
+@router.post("/api/models/{model_id}/duplicate")
+def duplicate_model(model_id: str):
+    conn = get_db_conn()
+    try:
+        cur = conn.cursor()
+        m = cur.execute("SELECT * FROM models WHERE id=?", (model_id,)).fetchone()
+        if not m:
+            raise HTTPException(status_code=404, detail="Model not found")
+
+        storage_mode = m["storageMode"] if "storageMode" in m.keys() else "copy"
+        if storage_mode == "reference":
+            current_path = m["sourcePath"]
+        else:
+            current_path = _resolve_copy_mode_file(model_id, m["filePath"] if "filePath" in m.keys() else None)
+        if not current_path or not os.path.exists(current_path):
+            raise HTTPException(status_code=404, detail="File not found on disk")
+
+        dest_subpath = folder_disk_path(m["folderId"])
+        # Strip root folder if present: folder_disk_path includes the root folder,
+        # but disk paths should only include child folders
+        parts = dest_subpath.split(os.path.sep) if dest_subpath else []
+        if len(parts) > 1:
+            # Check if the first part is a root folder (has no parent)
+            root_check = cur.execute(
+                "SELECT parentId FROM folders WHERE name=?",
+                (parts[0],)
+            ).fetchone()
+            if root_check and root_check["parentId"] is None:
+                # This is a root folder, skip it
+                dest_subpath = os.path.sep.join(parts[1:])
+
+        dest_dir = Path(UPLOAD_DIR) / dest_subpath
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        new_id = str(uuid.uuid4())
+        ext = os.path.splitext(current_path)[-1]
+        new_path = dest_dir / f"{new_id}{ext}"
+        shutil.copy2(current_path, new_path)
+
+        cur.execute(
+            "INSERT INTO models "
+            "(id,name,folderId,url,size,dateAdded,tags,description,thumbnail,manual,author,"
+            " sourceUrl,category,colorCount,sliceSettings,sourcePath,storageMode,filePath) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                new_id, m["name"], m["folderId"], f"/api/models/{new_id}/download",
+                os.path.getsize(new_path), now_ms(), m["tags"], m["description"], m["thumbnail"], None,
+                m["author"] if "author" in m.keys() else None,
+                m["sourceUrl"] if "sourceUrl" in m.keys() else None,
+                m["category"] if "category" in m.keys() else None,
+                m["colorCount"] if "colorCount" in m.keys() else None,
+                m["sliceSettings"] if "sliceSettings" in m.keys() else None,
+                None, "copy", str(new_path),
+            ),
+        )
+        conn.commit()
+        row = cur.execute("SELECT * FROM models WHERE id=?", (new_id,)).fetchone()
         return row_to_model(row)
     finally:
         conn.close()

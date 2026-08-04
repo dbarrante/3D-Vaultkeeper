@@ -213,3 +213,97 @@ def test_move_destination_already_exists_conflicts(client, tmp_path):
 def test_rename_missing_model_404s(client):
     resp = client.patch("/api/models/doesnotexist/location", json={"newPath": "/tmp/x.stl"})
     assert resp.status_code == 404
+
+
+def test_duplicate_copy_mode_file_creates_new_row_and_copy(client, tmp_path):
+    from app.db import get_db_conn
+    upload_dir = Path(os.environ["FILE_STORAGE"])
+    src = upload_dir / "abc123.stl"
+    src.write_text("model data")
+
+    conn = get_db_conn()
+    _insert_folder(conn, "f1", "Root")
+    conn.execute(
+        "INSERT INTO models "
+        "(id,name,folderId,url,size,dateAdded,tags,description,thumbnail,manual,author,"
+        " sourceUrl,category,colorCount,sliceSettings,sourcePath,storageMode,filePath) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        (
+            "abc123", "abc123.stl", "f1", "/api/models/abc123/download", 100, 0,
+            '["red"]', "a description", None, None, "some author",
+            None, "vehicles", None, None, None, "copy", str(src),
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+    resp = client.post("/api/models/abc123/duplicate")
+    assert resp.status_code == 200
+    new_model = resp.json()
+    assert new_model["id"] != "abc123"
+    assert new_model["folderId"] == "f1"
+    assert new_model["tags"] == ["red"]
+    assert new_model["description"] == "a description"
+    assert new_model["author"] == "some author"
+    assert new_model["storageMode"] == "copy"
+    assert new_model["sourcePath"] is None
+    assert os.path.exists(new_model["filePath"])
+    assert new_model["filePath"] != str(src)
+    assert src.exists(), "original file must be untouched"
+
+    conn = get_db_conn()
+    count = conn.execute("SELECT COUNT(*) c FROM models").fetchone()["c"]
+    conn.close()
+    assert count == 2
+
+
+def test_duplicate_reference_mode_file_becomes_copy_mode(client, tmp_path):
+    from app.db import get_db_conn
+    watch_root = tmp_path / "watched"
+    watch_root.mkdir()
+    src = watch_root / "hull.stl"
+    src.write_text("model data")
+
+    conn = get_db_conn()
+    _insert_folder(conn, "f1", "Root")
+    conn.execute(
+        "INSERT INTO watch_folders(id,path,folderId) VALUES (?,?,?)",
+        ("wf1", str(watch_root), "f1"),
+    )
+    _insert_model(conn, "m1", "f1", str(src), storage_mode="reference", source_path=str(src))
+    conn.commit()
+    conn.close()
+
+    upload_dir = Path(os.environ["FILE_STORAGE"])
+    resp = client.post("/api/models/m1/duplicate")
+    assert resp.status_code == 200
+    new_model = resp.json()
+    assert new_model["storageMode"] == "copy"
+    assert new_model["sourcePath"] is None
+    assert Path(new_model["filePath"]).resolve().is_relative_to(upload_dir.resolve())
+    assert os.path.exists(new_model["filePath"])
+    assert src.exists(), "original watched file must be untouched"
+
+
+def test_duplicate_mirrors_folder_disk_path(client, tmp_path):
+    from app.db import get_db_conn
+    upload_dir = Path(os.environ["FILE_STORAGE"])
+    src = upload_dir / "abc123.stl"
+    src.write_text("model data")
+
+    conn = get_db_conn()
+    _insert_folder(conn, "root", "Root")
+    _insert_folder(conn, "vehicles", "Vehicles", parent_id="root")
+    _insert_model(conn, "abc123", "vehicles", str(src), storage_mode="copy")
+    conn.commit()
+    conn.close()
+
+    resp = client.post("/api/models/abc123/duplicate")
+    assert resp.status_code == 200
+    new_path = Path(resp.json()["filePath"])
+    assert new_path.parent == upload_dir / "Vehicles"
+
+
+def test_duplicate_missing_model_404s(client):
+    resp = client.post("/api/models/doesnotexist/duplicate")
+    assert resp.status_code == 404
