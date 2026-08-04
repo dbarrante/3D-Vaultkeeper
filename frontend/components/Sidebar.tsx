@@ -131,13 +131,18 @@ const Sidebar: React.FC<SidebarProps> = ({
     };
   }, [isResizing, isDesktopVariant]);
 
-  // Ensure parents of current folder are expanded
+  // Auto-expand the current folder itself (so its own subfolders become
+  // visible the moment you navigate into it — this was the actual gap:
+  // the original version only walked *ancestors*, so selecting "Vehicles"
+  // never revealed "Tanks" inside it, only navigating into "Tanks" itself
+  // would expand "Vehicles" around it) and all of its ancestors (so a
+  // deep selection still shows its own position in the tree).
   useEffect(() => {
     if (currentFolderId && currentFolderId !== "all") {
       const expandPath = (id: string, path: Set<string>) => {
+        path.add(id);
         const folder = folders.find((f) => f.id === id);
         if (folder && folder.parentId) {
-          path.add(folder.parentId);
           expandPath(folder.parentId, path);
         }
       };
@@ -164,19 +169,23 @@ const Sidebar: React.FC<SidebarProps> = ({
     }
   };
 
-  const toggleExpand = (id: string) => {
-    onSelectFolder(id);
+  // Fires when the user manually clicks a tree item's expand/collapse
+  // arrow. Passing `expandedItems` below puts RichTreeView in controlled
+  // mode, which means it stops managing its own expand/collapse state
+  // entirely -- without this handler keeping `expandedIds` in sync,
+  // manual toggling would silently stop working the moment the tree
+  // becomes controlled.
+  const handleItemExpansionToggle = (
+    _event: React.SyntheticEvent | null,
+    itemId: string,
+    isExpanded: boolean,
+  ) => {
     setExpandedIds((prev) => {
       const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
+      if (isExpanded) next.add(itemId);
+      else next.delete(itemId);
       return next;
     });
-  };
-
-  const handleExpand = (e) => {
-    e.stopPropagation();
-    e.preventDefault();
   };
 
   const handleDeleteRequest = (id: string, count: number) => {
@@ -473,7 +482,8 @@ const Sidebar: React.FC<SidebarProps> = ({
             items={treefolders()}
             slots={{ item: CustomTreeItem }}
             expansionTrigger="iconContainer"
-            onItemExpansionToggle={handleExpand}
+            expandedItems={Array.from(expandedIds)}
+            onItemExpansionToggle={handleItemExpansionToggle}
             isItemEditable
             onItemLabelChange={(itemId, label) => onRenameFolder(itemId, label)}
           />
