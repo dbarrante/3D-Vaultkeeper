@@ -18,6 +18,36 @@
 
 ---
 
+## Status: Complete
+
+All 4 tasks implemented, task-reviewed (one fix round in Task 1 for a
+test-coverage gap in the plan's own specified tests), and passed a final
+whole-branch review that found 2 real Important issues invisible to any
+single task's narrow diff: (1) folder resolution ran outside
+`scan_watch_folder`'s per-file failure guard, so one DB error resolving a
+folder chain could silently abort an entire scheduler tick — every other
+watch folder and that tick's Downloads/Inbox scan included; (2) the
+master-item thumbnail was inert for every folder this feature itself
+creates, since scanner-ingested models never get a thumbnail and the
+original "earliest by date" rule didn't account for that. Both fixed in
+one dispatch, re-reviewed clean. Deferred, out of this plan's scope:
+`/api/drive-scan` still flattens (never in the design spec, a genuine
+gap not a regression — candidate for a follow-up plan) plus several
+Minor findings recorded in the (now-deleted) SDD ledger's final entries.
+
+Manual verification (2026-08-03): rebuilt the installer, hash-confirmed
+the install matched the build, and drove the real API end-to-end against
+the packaged app — created a watch folder over a fixture directory with
+a root-level file and a subdirectory holding 2 part files, scanned it,
+and confirmed via `GET /api/folders`/`GET /api/models` that the
+subdirectory became a real library folder with the 2 files inside while
+the root-level file landed unchanged in the target folder. Added a 3rd
+file and re-scanned: exactly 1 new file ingested, no duplicate folder
+created (idempotent reuse confirmed live). All test data cleaned up via
+the real API afterward.
+
+---
+
 ### Task 1: `get_or_create_folder` helper
 
 **Files:**
