@@ -27,6 +27,9 @@ const ImportWizard: React.FC<ImportWizardProps> = ({
   const [placements, setPlacements] = useState<StagedPlacement[]>([]);
   const [creatingUnderId, setCreatingUnderId] = useState<string | null>(null);
   const [newFolderName, setNewFolderName] = useState("");
+  const [step, setStep] = useState<"stage" | "review" | "results">("stage");
+  const [results, setResults] = useState<{ sourcePath: string; placementSourcePath: string; status: "ok" | "error"; error?: string; isModel: boolean }[]>([]);
+  const [committing, setCommitting] = useState(false);
 
   useEffect(() => {
     api
@@ -60,6 +63,35 @@ const ImportWizard: React.FC<ImportWizardProps> = ({
     setFolders((prev) => [...prev, created]);
     setNewFolderName("");
     setCreatingUnderId(null);
+  };
+
+  const runCommit = async (toCommit: StagedPlacement[]) => {
+    setCommitting(true);
+    try {
+      const newResults = await api.commitImport(
+        toCommit.map(({ sourcePath, isFolder, targetFolderId }) => ({ sourcePath, isFolder, targetFolderId })),
+      );
+      setResults((prev) => [
+        ...prev.filter((r) => !toCommit.some((p) => p.sourcePath === r.placementSourcePath)),
+        ...newResults,
+      ]);
+      setStep("results");
+      if (newResults.every((r) => r.status === "ok")) {
+        onComplete();
+      }
+    } finally {
+      setCommitting(false);
+    }
+  };
+
+  const handleConfirm = () => runCommit(placements);
+
+  const handleRetryFailed = () => {
+    const failedSourcePaths = new Set(
+      results.filter((r) => r.status === "error").map((r) => r.placementSourcePath),
+    );
+    const toRetry = placements.filter((p) => failedSourcePaths.has(p.sourcePath));
+    runCommit(toRetry);
   };
 
   const rootFolders = folders.filter((f) => f.parentId === null);
@@ -130,22 +162,94 @@ const ImportWizard: React.FC<ImportWizardProps> = ({
           <h2 className="text-lg font-semibold text-white">Import from folder</h2>
           <button onClick={onClose} aria-label="Close"><X className="w-5 h-5" /></button>
         </div>
-        {treeError && <p className="text-red-400 text-sm mb-2">{treeError}</p>}
-        <div className="flex-1 flex gap-4 overflow-hidden">
-          <div className="flex-1 overflow-y-auto border border-vault-700 rounded p-2">
-            <p className="text-xs text-slate-500 mb-2">On disk: {rootPath}</p>
-            {tree && (
-              <>
-                {tree.folders.map((f) => renderRawNode(f, true))}
-                {tree.files.map((f) => renderRawNode(f, false))}
-              </>
-            )}
-          </div>
-          <div className="flex-1 overflow-y-auto border border-vault-700 rounded p-2">
-            <p className="text-xs text-slate-500 mb-2">Your library</p>
-            {rootFolders.map(renderLogicalNode)}
-          </div>
-        </div>
+        {step === "stage" && (
+          <>
+            {treeError && <p className="text-red-400 text-sm mb-2">{treeError}</p>}
+            <div className="flex-1 flex gap-4 overflow-hidden">
+              <div className="flex-1 overflow-y-auto border border-vault-700 rounded p-2">
+                <p className="text-xs text-slate-500 mb-2">On disk: {rootPath}</p>
+                {tree && (
+                  <>
+                    {tree.folders.map((f) => renderRawNode(f, true))}
+                    {tree.files.map((f) => renderRawNode(f, false))}
+                  </>
+                )}
+              </div>
+              <div className="flex-1 overflow-y-auto border border-vault-700 rounded p-2">
+                <p className="text-xs text-slate-500 mb-2">Your library</p>
+                {rootFolders.map(renderLogicalNode)}
+              </div>
+            </div>
+            <div className="flex justify-end mt-4">
+              <button
+                disabled={placements.length === 0}
+                onClick={() => setStep("review")}
+                className="bg-blue-600 disabled:bg-vault-700 disabled:text-slate-500 text-white px-4 py-2 rounded"
+              >
+                Review ({placements.length})
+              </button>
+            </div>
+          </>
+        )}
+
+        {step === "review" && (
+          <>
+            <div className="flex-1 overflow-y-auto">
+              {placements.map((p) => (
+                <div key={p.sourcePath} className="flex justify-between px-2 py-1 border-b border-vault-800 text-sm">
+                  <span>{p.sourceLabel}</span>
+                  <span className="text-slate-500">→ {p.targetLabel}</span>
+                </div>
+              ))}
+            </div>
+            <div className="flex justify-between mt-4">
+              <button onClick={() => setStep("stage")} className="text-slate-400 px-4 py-2">Back</button>
+              <button
+                disabled={committing}
+                onClick={handleConfirm}
+                className="bg-blue-600 disabled:opacity-50 text-white px-4 py-2 rounded"
+              >
+                {committing ? "Moving files..." : "Confirm"}
+              </button>
+            </div>
+          </>
+        )}
+
+        {step === "results" && (
+          <>
+            <div className="flex-1 overflow-y-auto">
+              {placements.map((p) => {
+                const rowsForPlacement = results.filter((r) => r.placementSourcePath === p.sourcePath);
+                const failCount = rowsForPlacement.filter((r) => r.status === "error").length;
+                return (
+                  <div key={p.sourcePath} className="px-2 py-1 border-b border-vault-800 text-sm">
+                    <div className="flex justify-between">
+                      <span>{p.sourceLabel}</span>
+                      <span className={failCount > 0 ? "text-amber-400" : "text-green-400"}>
+                        {failCount > 0 ? `${failCount} failed` : "Done"}
+                      </span>
+                    </div>
+                    {rowsForPlacement.filter((r) => r.status === "error").map((r) => (
+                      <p key={r.sourcePath} className="text-xs text-red-400 pl-2">{r.sourcePath}: {r.error}</p>
+                    ))}
+                  </div>
+                );
+              })}
+            </div>
+            <div className="flex justify-between mt-4">
+              <button onClick={onClose} className="text-slate-400 px-4 py-2">Close</button>
+              {results.some((r) => r.status === "error") && (
+                <button
+                  disabled={committing}
+                  onClick={handleRetryFailed}
+                  className="bg-amber-600 disabled:opacity-50 text-white px-4 py-2 rounded"
+                >
+                  {committing ? "Retrying..." : "Retry failed items"}
+                </button>
+              )}
+            </div>
+          </>
+        )}
       </div>
     </div>
   );
