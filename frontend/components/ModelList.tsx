@@ -51,6 +51,7 @@ import InputLabel from "@mui/material/InputLabel";
 interface ModelListProps {
   models: STLModel[];
   folders: Folder[];
+  folderPreviews: Record<string, { count: number; thumbnail: string | null }>;
   currentFolderName: string;
   onBackNavigation: () => void;
   onUpload: (files: FileList) => void;
@@ -83,6 +84,7 @@ type SortOption =
 const ModelList: React.FC<ModelListProps> = ({
   models,
   folders,
+  folderPreviews,
   currentFolderName,
   onBackNavigation,
   onUpload,
@@ -505,58 +507,71 @@ const ModelList: React.FC<ModelListProps> = ({
           {/* Folders */}
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-3 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-2 pb-5 pt-2">
             {/* Render Folders First */}
-            {processedFolders.map((folder) => (
-              <div
-                key={folder.id}
-                onClick={() => onNavigateFolder(folder.id)}
-                onDragOver={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  setDragOverFolderId(folder.id);
-                }}
-                onDragLeave={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  setDragOverFolderId(null);
-                }}
-                onDrop={(e) => handleFolderDrop(e, folder.id)}
-                className={`cursor-pointer transition-all flex items-center relative overflow-hidden hover:-translate-y-1 ${
-                  dragOverFolderId === folder.id
-                    ? " -translate-y-1 brightness-150 ring-2 ring-white rounded-md"
-                    : " "
-                }`}
-              >
-                <Card className="w-full">
-                  <CardActionArea>
-                    <CardContent>
-                      <Stack
-                        sx={{
-                          justifyContent: "start",
-                          alignItems: "center",
-                        }}
-                        direction="row"
-                        spacing={2}
-                      >
-                        <Avatar sx={{}}>
-                          <FolderIcon />
-                        </Avatar>
-                        <Stack>
-                          <Typography variant="body1" component="div">
-                            {folder.name}
-                          </Typography>
-                          <Typography
-                            variant="body2"
-                            sx={{ color: "text.secondary" }}
+            {processedFolders.map((folder) => {
+              const preview = folderPreviews[folder.id];
+              const hasDirectFiles = !!preview && preview.count > 0;
+              return (
+                <div
+                  key={folder.id}
+                  onClick={() => onNavigateFolder(folder.id)}
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setDragOverFolderId(folder.id);
+                  }}
+                  onDragLeave={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setDragOverFolderId(null);
+                  }}
+                  onDrop={(e) => handleFolderDrop(e, folder.id)}
+                  className={`cursor-pointer transition-all flex items-center relative overflow-hidden hover:-translate-y-1 ${
+                    dragOverFolderId === folder.id
+                      ? " -translate-y-1 brightness-150 ring-2 ring-white rounded-md"
+                      : " "
+                  }`}
+                >
+                  <Card className="w-full">
+                    <CardActionArea>
+                      <CardContent>
+                        <Stack
+                          sx={{
+                            justifyContent: "start",
+                            alignItems: "center",
+                          }}
+                          direction="row"
+                          spacing={2}
+                        >
+                          {/* Avatar falls back to the FolderIcon child
+                              automatically whenever src is undefined (no
+                              direct files, or a direct file with no
+                              thumbnail) or fails to load — no extra
+                              fallback logic needed here. */}
+                          <Avatar
+                            src={hasDirectFiles ? preview.thumbnail || undefined : undefined}
                           >
-                            Folder
-                          </Typography>
+                            <FolderIcon />
+                          </Avatar>
+                          <Stack>
+                            <Typography variant="body1" component="div">
+                              {folder.name}
+                            </Typography>
+                            <Typography
+                              variant="body2"
+                              sx={{ color: "text.secondary" }}
+                            >
+                              {hasDirectFiles
+                                ? `${preview.count} ${preview.count === 1 ? "part" : "parts"}`
+                                : "Folder"}
+                            </Typography>
+                          </Stack>
                         </Stack>
-                      </Stack>
-                    </CardContent>
-                  </CardActionArea>
-                </Card>
-              </div>
-            ))}
+                      </CardContent>
+                    </CardActionArea>
+                  </Card>
+                </div>
+              );
+            })}
           </div>
 
           {/* Files */}
