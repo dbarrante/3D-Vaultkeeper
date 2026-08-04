@@ -405,9 +405,21 @@ const Sidebar: React.FC<SidebarProps> = ({
     const label = count === 1 ? "1 file" : `${count} files`;
     if (!window.confirm(`Delete this folder and everything in it (${label})? This cannot be undone.`)) return;
     try {
-      await api.deleteFileViewFolder(realPath);
+      const result = await api.deleteFileViewFolder(realPath);
       resetSelectionIfMutated(nodeId);
       onFileViewMutated();
+      // The backend deletes the library entries first, then rmtree's the
+      // directory. If that second half fails (typically a file held open by
+      // another process on Windows), it reports directoryRemoved: false rather
+      // than silently claiming success -- so surface that distinction instead
+      // of leaving the user to discover the surviving folder themselves.
+      if (result.directoryRemoved === false) {
+        alert(
+          `Removed ${result.deletedModels} library ${result.deletedModels === 1 ? "entry" : "entries"}, ` +
+            `but the folder itself could not be fully deleted from disk:\n\n${result.path}\n\n` +
+            `Something in it is probably open in another program. You may need to delete it manually.`,
+        );
+      }
     } catch (err) {
       console.error("Folder delete failed:", err);
       alert(err instanceof Error ? err.message : "Folder delete failed");
@@ -434,8 +446,12 @@ const Sidebar: React.FC<SidebarProps> = ({
     const isCopy = e.ctrlKey;
     try {
       if (isCopy) {
-        // duplicateModel always lands the copy beside the original (same
-        // folder as the source) -- it has no notion of a drop target. A
+        // duplicateModel has no notion of a drop target: for a copy-mode
+        // source it lands the copy beside the original (the same directory
+        // the source file actually lives in), and for a reference-mode
+        // source -- which lives outside the managed library, so "beside the
+        // original" isn't a legal destination for a copy -- it lands under
+        // UPLOAD_DIR mirroring the source's logical folder chain. A
         // drag-and-drop copy DID specify a destination (wherever the user
         // dropped it), so a second step relocates the freshly-created
         // duplicate into targetDir, reusing the same updateModelLocation
@@ -445,10 +461,30 @@ const Sidebar: React.FC<SidebarProps> = ({
         const duplicated = await api.duplicateModel(modelId);
         const duplicatedFilename =
           duplicated.filePath?.split(/[\\/]/).pop() || duplicated.name;
-        await api.updateModelLocation(
-          duplicated.id,
-          `${targetDir}/${duplicatedFilename}`,
-        );
+        try {
+          await api.updateModelLocation(
+            duplicated.id,
+            `${targetDir}/${duplicatedFilename}`,
+          );
+        } catch (relocateErr) {
+          // The duplicate already exists as a real row + real file at this
+          // point, but it never reached the folder the user dropped it on.
+          // Leaving it would strand a copy somewhere the user never asked
+          // for while they only see an error -- e.g. Ctrl+dragging onto a
+          // watch-folder-rooted node, which validate_destination always
+          // rejects because a copy-mode file may not live in a watch folder.
+          // Cleanup is best-effort and deliberately swallows its own failure
+          // so the ORIGINAL relocate error is what surfaces to the user.
+          try {
+            await api.deleteModel(duplicated.id, true);
+          } catch (cleanupErr) {
+            console.error(
+              "Failed to clean up orphaned duplicate after a failed copy-to-folder:",
+              cleanupErr,
+            );
+          }
+          throw relocateErr;
+        }
       } else {
         await api.updateModelLocation(modelId, `${targetDir}/${filename}`);
       }

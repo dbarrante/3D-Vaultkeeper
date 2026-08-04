@@ -254,7 +254,13 @@ export const api = {
     return res.json();
   },
 
-  deleteFileViewFolder: async (path: string): Promise<{ deletedModels: number; path: string }> => {
+  // `directoryRemoved` distinguishes a full success from "the library entries
+  // were deleted but rmtree couldn't fully remove the directory" (e.g. a file
+  // locked by another process on Windows). Callers must not treat the two the
+  // same -- see handleDeleteFileViewFolder in Sidebar.tsx.
+  deleteFileViewFolder: async (
+    path: string,
+  ): Promise<{ deletedModels: number; path: string; directoryRemoved: boolean }> => {
     const res = await fetch(`${getApiBaseUrl()}/file-view/folder`, {
       method: "DELETE",
       headers: { "Content-Type": "application/json" },
