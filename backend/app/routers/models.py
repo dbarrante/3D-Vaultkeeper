@@ -235,19 +235,10 @@ def duplicate_model(model_id: str):
         if not current_path or not os.path.exists(current_path):
             raise HTTPException(status_code=404, detail="File not found on disk")
 
-        dest_subpath = folder_disk_path(m["folderId"])
-        # Strip root folder if present: folder_disk_path includes the root folder,
-        # but disk paths should only include child folders
-        parts = dest_subpath.split(os.path.sep) if dest_subpath else []
-        if len(parts) > 1:
-            # Check if the first part is a root folder (has no parent)
-            root_check = cur.execute(
-                "SELECT parentId FROM folders WHERE name=?",
-                (parts[0],)
-            ).fetchone()
-            if root_check and root_check["parentId"] is None:
-                # This is a root folder, skip it
-                dest_subpath = os.path.sep.join(parts[1:])
+        try:
+            dest_subpath = folder_disk_path(m["folderId"])
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc))
 
         dest_dir = Path(UPLOAD_DIR) / dest_subpath
         dest_dir.mkdir(parents=True, exist_ok=True)

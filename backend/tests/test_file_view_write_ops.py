@@ -301,9 +301,58 @@ def test_duplicate_mirrors_folder_disk_path(client, tmp_path):
     resp = client.post("/api/models/abc123/duplicate")
     assert resp.status_code == 200
     new_path = Path(resp.json()["filePath"])
-    assert new_path.parent == upload_dir / "Vehicles"
+    assert new_path.parent == upload_dir / "Root" / "Vehicles"
 
 
 def test_duplicate_missing_model_404s(client):
     resp = client.post("/api/models/doesnotexist/duplicate")
     assert resp.status_code == 404
+
+
+def test_duplicate_deep_folder_hierarchy_mirrors_all_segments(client, tmp_path):
+    from app.db import get_db_conn
+    upload_dir = Path(os.environ["FILE_STORAGE"])
+    src = upload_dir / "abc123.stl"
+    src.write_text("model data")
+
+    conn = get_db_conn()
+    _insert_folder(conn, "root", "Root")
+    _insert_folder(conn, "vehicles", "Vehicles", parent_id="root")
+    _insert_folder(conn, "tanks", "Tanks", parent_id="vehicles")
+    _insert_model(conn, "abc123", "tanks", str(src), storage_mode="copy")
+    conn.commit()
+    conn.close()
+
+    resp = client.post("/api/models/abc123/duplicate")
+    assert resp.status_code == 200
+    new_path = Path(resp.json()["filePath"])
+    # Verify all three hierarchy levels are reflected in the path
+    assert new_path.parent == upload_dir / "Root" / "Vehicles" / "Tanks"
+
+
+def test_duplicate_missing_folder_404s(client, tmp_path):
+    from app.db import get_db_conn
+    upload_dir = Path(os.environ["FILE_STORAGE"])
+    src = upload_dir / "abc123.stl"
+    src.write_text("model data")
+
+    conn = get_db_conn()
+    _insert_folder(conn, "f1", "Root")
+    # Insert model with folderId pointing to a non-existent folder
+    conn.execute(
+        "INSERT INTO models "
+        "(id,name,folderId,url,size,dateAdded,tags,description,thumbnail,manual,author,"
+        " sourceUrl,category,colorCount,sliceSettings,sourcePath,storageMode,filePath) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        (
+            "abc123", "abc123.stl", "nonexistent", "/api/models/abc123/download", 100, 0,
+            "[]", "", None, None, None,
+            None, None, None, None, None, "copy", str(src),
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+    resp = client.post("/api/models/abc123/duplicate")
+    assert resp.status_code == 404
+    assert "not found" in resp.json()["detail"].lower()
