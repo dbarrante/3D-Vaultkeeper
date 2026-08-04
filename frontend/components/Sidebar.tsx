@@ -36,6 +36,10 @@ import Container from "@mui/material/Container";
 import Button from "@mui/material/Button";
 import OutlinedInput from "@mui/material/OutlinedInput";
 import Badge from "@mui/material/Badge";
+import Menu from "@mui/material/Menu";
+import MenuItem from "@mui/material/MenuItem";
+
+import { api } from "../services/api";
 
 const APP_TAG = import.meta.env.VITE_APP_TAG || "dev";
 
@@ -58,6 +62,7 @@ interface SidebarProps {
   // desyncing from App's own copy used for grid filtering.
   viewMode: "logical" | "file";
   onViewModeChange?: (mode: "logical" | "file") => void;
+  onFileViewMutated: () => void;
 }
 
 const Sidebar: React.FC<SidebarProps> = ({
@@ -75,6 +80,7 @@ const Sidebar: React.FC<SidebarProps> = ({
   variant = "desktop",
   viewMode,
   onViewModeChange,
+  onFileViewMutated,
 }) => {
   const isDesktopVariant = variant === "desktop";
   const [isCreatingRoot, setIsCreatingRoot] = useState(false);
@@ -296,6 +302,7 @@ const Sidebar: React.FC<SidebarProps> = ({
   const fileTree = useMemo(() => {
     type FileNode = { id: string; label: string; children: FileNode[]; childMap: Record<string, FileNode> };
     const root: FileNode = { id: "__root__", label: "", children: [], childMap: {} };
+    const realPaths = new Map<string, string>();
 
     models.forEach((m) => {
       if (!m.filePath) return;
@@ -313,14 +320,26 @@ const Sidebar: React.FC<SidebarProps> = ({
         return;
       }
 
+      // The synthetic id's segments are always a *suffix* of the file's real
+      // (normalized, filename-dropped) directory segments -- fileViewSegments
+      // only ever drops a leading prefix (nothing, or everything through a
+      // literal "uploads" segment). So realSegments.length - meaningfulSegments.length
+      // is the number of dropped leading segments, constant for this file, and
+      // slicing rawSegments to dropped + depth reconstructs the real absolute
+      // path up to any node on this file's chain.
+      const rawSegments = m.filePath.replace(/\\/g, "/").split("/").filter((s) => s.length > 0);
+      rawSegments.pop(); // drop filename, mirrors fileViewSegments
+      const dropped = rawSegments.length - meaningfulSegments.length;
+
       let cursor = root;
       let idPath = "file";
-      meaningfulSegments.forEach((segment) => {
+      meaningfulSegments.forEach((segment, index) => {
         idPath += `/${segment}`;
         if (!cursor.childMap[segment]) {
           const node: FileNode = { id: idPath, label: segment, children: [], childMap: {} };
           cursor.childMap[segment] = node;
           cursor.children.push(node);
+          realPaths.set(idPath, rawSegments.slice(0, dropped + index + 1).join("/"));
         }
         cursor = cursor.childMap[segment];
       });
@@ -331,8 +350,87 @@ const Sidebar: React.FC<SidebarProps> = ({
       label: node.label,
       children: node.children.map(strip),
     });
-    return root.children.map(strip);
+    return { items: root.children.map(strip), realPaths };
   }, [models]);
+
+  const [folderContextMenu, setFolderContextMenu] = useState<{
+    mouseX: number;
+    mouseY: number;
+    nodeId: string;
+    realPath: string;
+  } | null>(null);
+
+  const handleFileTreeContextMenu = (e: React.MouseEvent, nodeId: string) => {
+    if (nodeId === FILE_VIEW_UPLOADS_BUCKET_ID) return; // synthetic bucket, not a real single folder
+    const realPath = fileTree.realPaths.get(nodeId);
+    if (!realPath) return;
+    e.preventDefault();
+    e.stopPropagation();
+    setFolderContextMenu({ mouseX: e.clientX - 2, mouseY: e.clientY - 4, nodeId, realPath });
+  };
+
+  // If the node being mutated is the one currently selected (or an ancestor
+  // of it), its synthetic id no longer resolves to anything after the
+  // rename/delete -- App.tsx's positional segment match in filteredModels
+  // would silently return zero models with no error. Falling back to "all"
+  // mirrors the same defensive reset onViewModeChange already does when
+  // switching modes ("avoid a stale id from one mode being misread as the
+  // other mode's id").
+  const resetSelectionIfMutated = (nodeId: string) => {
+    if (currentFolderId === nodeId || currentFolderId.startsWith(`${nodeId}/`)) {
+      onSelectFolder("all");
+    }
+  };
+
+  const handleRenameFileViewFolder = async (nodeId: string, realPath: string) => {
+    const currentName = realPath.split("/").pop() || "";
+    const newName = window.prompt("Rename folder:", currentName);
+    if (!newName || newName === currentName) return;
+    try {
+      await api.renameFileViewFolder(realPath, newName);
+      resetSelectionIfMutated(nodeId);
+      onFileViewMutated();
+    } catch (err) {
+      console.error("Folder rename failed:", err);
+      alert(err instanceof Error ? err.message : "Folder rename failed");
+    }
+  };
+
+  const handleDeleteFileViewFolder = async (nodeId: string, realPath: string) => {
+    const count = models.filter((m) => {
+      if (!m.filePath) return false;
+      const norm = m.filePath.replace(/\\/g, "/");
+      return norm === realPath || norm.startsWith(`${realPath}/`);
+    }).length;
+    const label = count === 1 ? "1 file" : `${count} files`;
+    if (!window.confirm(`Delete this folder and everything in it (${label})? This cannot be undone.`)) return;
+    try {
+      await api.deleteFileViewFolder(realPath);
+      resetSelectionIfMutated(nodeId);
+      onFileViewMutated();
+    } catch (err) {
+      console.error("Folder delete failed:", err);
+      alert(err instanceof Error ? err.message : "Folder delete failed");
+    }
+  };
+
+  // Mirrors CustomTreeItem's own forwardRef shape above (not memoized via
+  // useCallback either) -- RichTreeView's slots.item passes a ref through
+  // for focus/keyboard-nav/scroll-into-view; a bare function component here
+  // would silently drop it (React 18) instead of forwarding it to the
+  // underlying TreeItem.
+  const FileViewTreeItem = React.forwardRef(function FileViewTreeItem(
+    props: TreeItemProps,
+    ref: React.Ref<HTMLLIElement>,
+  ) {
+    return (
+      <TreeItem
+        {...props}
+        ref={ref}
+        onContextMenu={(e) => handleFileTreeContextMenu(e, props.itemId)}
+      />
+    );
+  });
 
   interface CustomLabelProps extends UseTreeItemLabelSlotOwnProps {
     status: UseTreeItemStatus;
@@ -564,8 +662,9 @@ const Sidebar: React.FC<SidebarProps> = ({
             />
           ) : (
             <RichTreeView
-              items={fileTree}
+              items={fileTree.items}
               selectedItems={currentFolderId}
+              slots={{ item: FileViewTreeItem }}
               onSelectedItemsChange={(_e, itemId) => {
                 if (itemId) onSelectFolder(itemId as string);
               }}
@@ -573,6 +672,32 @@ const Sidebar: React.FC<SidebarProps> = ({
           )}
         </div>
       </nav>
+
+      <Menu
+        open={folderContextMenu !== null}
+        onClose={() => setFolderContextMenu(null)}
+        anchorReference="anchorPosition"
+        anchorPosition={
+          folderContextMenu ? { top: folderContextMenu.mouseY, left: folderContextMenu.mouseX } : undefined
+        }
+      >
+        <MenuItem
+          onClick={() => {
+            if (folderContextMenu) handleRenameFileViewFolder(folderContextMenu.nodeId, folderContextMenu.realPath);
+            setFolderContextMenu(null);
+          }}
+        >
+          Rename
+        </MenuItem>
+        <MenuItem
+          onClick={() => {
+            if (folderContextMenu) handleDeleteFileViewFolder(folderContextMenu.nodeId, folderContextMenu.realPath);
+            setFolderContextMenu(null);
+          }}
+        >
+          Delete
+        </MenuItem>
+      </Menu>
 
       <div className="p-4 border-t border-vault-700 z-10 gap-3 flex flex-col">
         <Button

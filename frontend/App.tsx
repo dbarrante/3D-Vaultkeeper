@@ -755,6 +755,7 @@ const App = () => {
               setViewMode(mode);
               setCurrentFolderId("all"); // avoid a stale id from one mode being misread as the other mode's id
             }}
+            onFileViewMutated={fetchData}
             variant="desktop"
           />
         ) : (
@@ -809,6 +810,7 @@ const App = () => {
                       setViewMode(mode);
                       setCurrentFolderId("all"); // avoid a stale id from one mode being misread as the other mode's id
                     }}
+                    onFileViewMutated={fetchData}
                     variant="mobile"
                   />
                 </div>
