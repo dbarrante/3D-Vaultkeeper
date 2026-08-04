@@ -2,29 +2,54 @@ import os
 import re
 import shutil
 from pathlib import Path
+from typing import Optional
 
 from app.services.scan import SUPPORTED_EXTENSIONS
 from app.db import get_db_conn, UPLOAD_DIR
 from app.services.ingestion import ingest_file
 
 
-def build_tree(root: Path) -> dict:
+def build_tree(root: Path, _visited: Optional[set] = None) -> dict:
     """Read-only recursive walk of a raw directory for the Import Wizard's
     left pane. No DB writes and no files are touched -- this never
     modifies anything, it only describes what's already there.
+    Unreadable entries (permission-denied subdirectories, broken/vanished
+    entries) are silently skipped rather than aborting the whole walk --
+    a picked directory (e.g. a drive root) commonly contains at least one
+    inaccessible system folder, and that shouldn't prevent seeing
+    everything else. _visited tracks resolved real paths already walked
+    in this traversal, guarding against a symlink cycle causing
+    unbounded recursion.
     """
+    if _visited is None:
+        _visited = set()
+    try:
+        real = root.resolve()
+    except OSError:
+        real = root
+    if real in _visited:
+        return {"name": root.name, "path": str(root), "folders": [], "files": []}
+    _visited.add(real)
+
     folders = []
     files = []
-    for entry in sorted(root.iterdir(), key=lambda e: e.name.lower()):
-        if entry.is_dir():
-            folders.append(build_tree(entry))
-        elif entry.is_file():
-            files.append({
-                "name": entry.name,
-                "path": str(entry),
-                "isModel": entry.suffix.lower() in SUPPORTED_EXTENSIONS,
-                "size": entry.stat().st_size,
-            })
+    try:
+        entries = sorted(root.iterdir(), key=lambda e: e.name.lower())
+    except (PermissionError, OSError):
+        entries = []
+    for entry in entries:
+        try:
+            if entry.is_dir():
+                folders.append(build_tree(entry, _visited))
+            elif entry.is_file():
+                files.append({
+                    "name": entry.name,
+                    "path": str(entry),
+                    "isModel": entry.suffix.lower() in SUPPORTED_EXTENSIONS,
+                    "size": entry.stat().st_size,
+                })
+        except (PermissionError, OSError):
+            continue
     return {"name": root.name, "path": str(root), "folders": folders, "files": files}
 
 

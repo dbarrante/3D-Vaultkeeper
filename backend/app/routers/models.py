@@ -19,14 +19,20 @@ def _resolve_copy_mode_file(model_id: str, file_path: Optional[str]) -> Optional
     real current location -- correct for both flat legacy uploads and
     wizard-imported files placed in real subdirectories) and falls back
     to the historical flat os.listdir(UPLOAD_DIR) + id-prefix match only
-    if filePath is missing or stale (e.g. a row that somehow predates
-    the Task 1 backfill).
+    if filePath is missing or stale. Guards against an empty model_id
+    matching every filename via startswith(""), and against the flat
+    scan returning a directory (UPLOAD_DIR now contains real
+    subdirectories: manuals/, and every logical folder the wizard
+    creates).
     """
+    if not model_id:
+        return None
     if file_path and os.path.exists(file_path):
         return file_path
     for fname in os.listdir(UPLOAD_DIR):
-        if fname.startswith(model_id):
-            return os.path.join(UPLOAD_DIR, fname)
+        candidate = os.path.join(UPLOAD_DIR, fname)
+        if fname.startswith(model_id) and os.path.isfile(candidate):
+            return candidate
     return None
 
 

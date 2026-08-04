@@ -55,13 +55,14 @@ def import_model_by_id(payload: dict):
         "id": mid, "name": modelName, "folderId": folderId if folderId != "all" else "1",
         "url": f"/api/models/{mid}/download", "size": size, "dateAdded": now_ms(),
         "tags": ["imported"], "description": f"Imported from {source_label}", "thumbnail": thumbnail,
+        "filePath": path,
     }
     conn = get_db_conn()
     cur = conn.cursor()
     cur.execute(
-        "INSERT INTO models(id,name,folderId,url,size,dateAdded,tags,description,thumbnail) VALUES (?,?,?,?,?,?,?,?,?)",
+        "INSERT INTO models(id,name,folderId,url,size,dateAdded,tags,description,thumbnail,filePath) VALUES (?,?,?,?,?,?,?,?,?,?)",
         (model["id"], model["name"], model["folderId"], model["url"], model["size"],
-         model["dateAdded"], json.dumps(model["tags"]), model["description"], model["thumbnail"]),
+         model["dateAdded"], json.dumps(model["tags"]), model["description"], model["thumbnail"], model["filePath"]),
     )
     conn.commit()
     conn.close()
