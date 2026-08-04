@@ -414,23 +414,35 @@ const Sidebar: React.FC<SidebarProps> = ({
     }
   };
 
-  // Mirrors CustomTreeItem's own forwardRef shape above (not memoized via
-  // useCallback either) -- RichTreeView's slots.item passes a ref through
-  // for focus/keyboard-nav/scroll-into-view; a bare function component here
-  // would silently drop it (React 18) instead of forwarding it to the
-  // underlying TreeItem.
-  const FileViewTreeItem = React.forwardRef(function FileViewTreeItem(
-    props: TreeItemProps,
-    ref: React.Ref<HTMLLIElement>,
-  ) {
-    return (
-      <TreeItem
-        {...props}
-        ref={ref}
-        onContextMenu={(e) => handleFileTreeContextMenu(e, props.itemId)}
-      />
-    );
-  });
+  // forwardRef mirrors CustomTreeItem's shape above -- RichTreeView's
+  // slots.item passes a ref through for focus/keyboard-nav/scroll-into-view;
+  // a bare function component here would silently drop it (React 18)
+  // instead of forwarding it to the underlying TreeItem.
+  //
+  // Also wrapped in useCallback keyed on [fileTree] (per review): without
+  // memoization the component gets a new identity on every Sidebar
+  // re-render -- including the very re-render triggered by
+  // setFolderContextMenu when the user right-clicks -- which makes MUI
+  // remount tree items instead of updating them in place, partially
+  // undercutting the forwardRef fix above (remounted items lose focus/DOM
+  // identity anyway). The closure only reads handleFileTreeContextMenu,
+  // which itself only reads fileTree.realPaths, so [fileTree] is the
+  // correct (and only) dependency.
+  const FileViewTreeItem = React.useCallback(
+    React.forwardRef(function FileViewTreeItem(
+      props: TreeItemProps,
+      ref: React.Ref<HTMLLIElement>,
+    ) {
+      return (
+        <TreeItem
+          {...props}
+          ref={ref}
+          onContextMenu={(e) => handleFileTreeContextMenu(e, props.itemId)}
+        />
+      );
+    }),
+    [fileTree],
+  );
 
   interface CustomLabelProps extends UseTreeItemLabelSlotOwnProps {
     status: UseTreeItemStatus;
