@@ -167,63 +167,89 @@ this point.
 Before any backend write, a summary screen lists every staged placement as
 `source → destination`, one row per top-level dragged item (a dragged folder's
 contents are summarized under it, not listed file-by-file, to keep this
-readable for large folders). Filename collisions against files already in the
-destination are detected client-side (the wizard already has the full raw tree
-and can fetch the destination folder's current model list) and shown with
-their resolved auto-suffixed name (see Collision Handling below), so nothing
-here is a surprise after commit.
+readable for large folders) — so nothing about where files are headed is a
+surprise after commit.
 
 ### Backend: commit
 
 `POST /api/import/commit`
 
-Body: the full list of staged placements from the review step.
+Body: the full list of staged placements from the review step. Every
+placement's `targetFolderId` refers to an already-existing folder — new
+folders are created immediately (via the existing `POST /api/folders`
+endpoint) at the moment the user creates them in the wizard's right pane, not
+deferred to commit time. Commit therefore never needs to create folders
+itself, only resolve each target folder's full path.
 
-For each placement, in order, independently (a failure on one does not abort
-the rest — see Safety):
+Each placement expands to one or more individual files (a loose-file
+placement is one file; a folder placement is every file found by walking it
+recursively). Every expanded file is moved independently (a failure on one
+does not abort any other — see Safety), after resolving the placement's
+target folder's full logical path (walking its `parentId` chain) once per
+placement: files where `isModel` is true go through
+`ingestion.ingest_file(..., move=True, dest_subpath=<that path>)`; files
+where it's false get a plain `shutil.move()` into the same destination
+directory, with no DB row created.
 
-1. Resolve/create the destination folder chain via the existing
-   `get_or_create_folder` helper (same one `scan_watch_folder` uses), based on
-   the target logical folder's full path.
-2. Compute the destination directory under the library's managed storage root,
-   mirroring that logical folder path.
-3. `shutil.move()` the source (whole folder, or loose file) into that
-   destination. `shutil.move()` handles cross-drive moves transparently.
-4. For every file in the moved item where `isModel` was true, create a new
-   `STLModel` row: `storageMode: "copy"`, `folderId` set to the resolved
-   destination folder, `filePath` set to its new real path. Thumbnails are
-   only ever generated client-side from a browser `File` object today (see
-   `thumbnailGenerator.ts`), which wizard-imported files never pass through —
-   same limitation watch-folder-scanned models already have. Wizard-imported
-   models get `thumbnail: null`, consistent with that existing behavior; the
-   folder-preview "master item" card already handles thumbnail-less models
-   gracefully (falls back to the next model in the folder that has one, or a
-   plain folder icon).
-5. Non-model sibling files move along with their containing folder but are not
-   given DB rows, consistent with how the rest of the library already ignores
-   unrecognized file types.
+This reuses the app's one existing ingestion path rather than adding a
+second one, which also settles how the physical filename is chosen:
+`ingest_file` already stores every copy-mode file under an opaque
+`<model-id>.<ext>` name (never the original filename) specifically to avoid
+collisions in its flat storage — this spec adds a `dest_subpath` parameter so
+that name can land inside a real subfolder (`dest_subpath/<model-id>.<ext>`)
+instead of flat, but doesn't change the naming convention itself. Because
+every physical filename is already unique by construction, **physical
+filename collisions are not possible** — see Collision Handling below for
+what "collision" actually means here.
 
-Response: per-placement result — `{ sourcePath, status: "ok" | "error", error?: string, modelsCreated: number }` — so the frontend can render the results screen without a second round-trip.
+`ingest_file` creates the `STLModel` row for each model file (`storageMode:
+"copy"`, `folderId` set to the resolved target, `filePath` set to the real
+path it just wrote to). Thumbnails are only ever generated client-side from a
+browser `File` object today (see `thumbnailGenerator.ts`), which
+wizard-imported files never pass through — same limitation watch-folder-
+scanned models already have. Wizard-imported models get `thumbnail: null`,
+consistent with that existing behavior; the folder-preview "master item" card
+already handles thumbnail-less models gracefully (falls back to the next
+model in the folder that has one, or a plain folder icon). Non-model sibling
+files move alongside their folder's models but are never turned into DB rows,
+consistent with how the rest of the library already ignores unrecognized
+file types.
+
+Folder names become real filesystem path segments here for the first time in
+this app (existing folder-mirroring from watch folders never created physical
+directories, since reference-mode files are never moved). A folder renamed to
+something filesystem-illegal (reserved Windows names, trailing dots,
+`< > : " / \ | ? *`) must not be able to corrupt or misdirect a move — each
+path segment gets sanitized before being joined into a real path.
+
+Response: one result per expanded file — `{ sourcePath, placementSourcePath, status: "ok" | "error", error?: string, isModel: boolean }` — `placementSourcePath` ties each file back to the top-level staged placement it came from, so the results screen can group a folder's files under the one row the user actually dragged while still reporting each file's real outcome.
 
 ### Results screen + retry
 
-After commit, a results screen lists every placement with its outcome. Failed
-placements (their source files remain untouched in the original location,
-since a failed `shutil.move()` doesn't partially commit) are kept in wizard
-state with a "Retry failed items" action that re-submits just those, without
-re-fetching the tree or re-staging the rest of the batch.
+After commit, a results screen lists every staged placement, grouping its
+underlying files' results under it (via `placementSourcePath`) — a folder
+placement can show a mix of succeeded and failed files. Failed files (each
+remains untouched in its original location — a failed move never partially
+completes) are kept in wizard state with a "Retry failed items" action that
+re-submits just those files, without re-fetching the tree or re-staging
+anything that already succeeded.
 
 ### Collision handling
 
-If a moved file's name already exists in its destination directory — whether
-because a file already there has that name, or because two different staged
-placements in the same batch both land a same-named file in the same
-destination — the backend auto-suffixes it (`hull.stl` → `hull_1.stl`,
-incrementing until unique) before the move, processing the batch in a fixed
-order so repeated commits (e.g. a retry) produce the same result. The review
-step surfaces this ahead of time using the same logic client-side, checking
-both existing destination contents and the rest of the staged batch, so the
-resolved name is never a surprise at commit time.
+Physical filenames can't collide (see above — every copy-mode file already
+gets an opaque, unique `<model-id>.<ext>` name by construction, regardless of
+its original name or destination). "Collision" here means two models with
+the same **display name** (`STLModel.name`, e.g. two different `hull.stl`
+files from two different source folders) ending up in the same logical
+folder. This is already possible today with zero special handling — nothing
+in the schema or UI enforces name uniqueness within a folder, and the grid
+already distinguishes cards by `id`, not `name`. No new collision-handling
+logic is needed; the review step doesn't need to warn about this.
+
+A dragged folder's contents move file-by-file (not as a single directory
+move — see Backend: commit), so there's no directory-already-exists case to
+handle either: `dest_subpath` is just a path that gets created as needed, and
+every file lands under its own unique name inside it.
 
 ## Logical/File Sidebar Toggle
 
@@ -246,16 +272,20 @@ folder tree. Defaults to Logical.
 - **Nothing touches disk before Confirm.** Tree-peek and all drag-and-drop
   staging are read-only/client-side. The only write is the single `commit`
   call (and its retry) at the end.
-- **Per-item isolation.** Each placement's move is attempted independently;
-  one failure (locked file, permission denied, source vanished since staging)
-  is caught and reported without aborting sibling placements — the same
-  failure-tolerant pattern already used in `scan_watch_folder`.
-- **Deterministic, visible collision handling.** Auto-suffixed names are shown
-  in the review step before commit, not discovered afterward.
-- **No partial moves.** A failed `shutil.move()` leaves the source file
-  exactly where it was; the app never deletes a source file without the move
-  having actually succeeded.
-- **Retry without re-staging.** Failures don't require restarting the wizard.
+- **Per-file isolation.** Each file's move is attempted independently; one
+  failure (locked file, permission denied, source vanished since staging) is
+  caught and reported without aborting any other file — the same
+  failure-tolerant pattern already used in `scan_watch_folder`, applied at
+  file granularity so one bad file in a large dragged folder doesn't block
+  the rest of that folder.
+- **Path segments are sanitized** before being joined into a real filesystem
+  path, so a folder name that happens to be filesystem-illegal can't corrupt
+  or misdirect a move.
+- **No partial moves.** A failed move leaves its source file exactly where it
+  was; the app never deletes a source file without the move having actually
+  succeeded.
+- **Retry without re-staging.** Failures don't require restarting the wizard
+  or re-moving files that already succeeded.
 
 ## Testing
 
@@ -264,10 +294,12 @@ folder tree. Defaults to Logical.
 - Tree-peek: nested directories, mixed model/non-model files, empty
   directories, `isModel` flagging correctness.
 - Commit: successful moves create `STLModel` rows with correct `folderId`,
-  `storageMode: "copy"`, and `filePath`; new folders are created via
-  `get_or_create_folder` without duplicating existing ones; collision
-  auto-suffixing; a simulated per-item failure (e.g. a locked file) doesn't
-  abort sibling items in the same batch; failed items are retryable.
+  `storageMode: "copy"`, and `filePath`, and land the physical file under the
+  correct subdirectory; non-model sibling files move without creating a row;
+  a simulated per-file failure (e.g. a locked file) doesn't abort sibling
+  files in the same batch, including other files in the same dragged folder;
+  failed files are retryable; a filesystem-illegal folder name doesn't
+  produce a broken or escaping path.
 - Migration: backfill sets `filePath` correctly for both existing
   reference-mode and copy-mode rows without moving anything on disk.
 
