@@ -241,3 +241,48 @@ def test_replace_file_on_reference_model_returns_400_and_does_not_write(client, 
 
     # Copy-mode behavior is unchanged (still 200, still replaces the file) —
     # see test_replace_model_file_updates_size in test_models_bulk.py.
+
+
+def test_download_subdirectory_model_returns_file_bytes(client, tmp_path):
+    """A model ingested via the Import Wizard's commit endpoint (Task 4) lands
+    in a real UPLOAD_DIR subdirectory via dest_subpath, not flat in UPLOAD_DIR's
+    root. Download must resolve it via filePath, not the flat os.listdir scan."""
+    from app.services.ingestion import ingest_file
+
+    source = tmp_path / "hull.stl"
+    source.write_bytes(b"solid subdir content endsolid")
+    model = ingest_file(
+        str(source),
+        folder_id="1",
+        original_filename="hull.stl",
+        move=True,
+        dest_subpath="Vehicles/Tanks",
+    )
+
+    response = client.get(f"/api/models/{model['id']}/download")
+    assert response.status_code == 200
+    assert response.content == b"solid subdir content endsolid"
+
+
+def test_delete_subdirectory_model_removes_the_actual_file(client, tmp_path):
+    from app.services.ingestion import ingest_file
+    from app.db import UPLOAD_DIR
+
+    source = tmp_path / "hull.stl"
+    source.write_bytes(b"solid endsolid")
+    model = ingest_file(
+        str(source),
+        folder_id="1",
+        original_filename="hull.stl",
+        move=True,
+        dest_subpath="Vehicles/Tanks",
+    )
+    disk_path = UPLOAD_DIR / "Vehicles" / "Tanks" / f"{model['id']}.stl"
+    assert disk_path.exists()
+
+    response = client.delete(f"/api/models/{model['id']}")
+    assert response.status_code == 200
+    assert not disk_path.exists()  # actually removed, not just a silent no-op
+
+    listed = client.get("/api/models", params={"folderId": "1"}).json()
+    assert all(m["id"] != model["id"] for m in listed)

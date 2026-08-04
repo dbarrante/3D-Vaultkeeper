@@ -181,3 +181,73 @@ def test_bulk_tag_skips_tombstoned_models(client, tmp_path):
 
     assert "new-tag" in active_tags
     assert "new-tag" not in tombstoned_tags
+
+
+def test_bulk_delete_removes_subdirectory_file(client, tmp_path):
+    """Mirrors test_bulk_delete_mixed_batch_tombstones_reference_and_hard_deletes_copy
+    but for a model placed in a real UPLOAD_DIR subdirectory (Import Wizard commit,
+    Task 4's dest_subpath) rather than flat — bulk-delete's os.listdir(UPLOAD_DIR)
+    scan never finds files a directory down, so this must resolve via filePath."""
+    from app.services.ingestion import ingest_file
+    from app.db import UPLOAD_DIR
+
+    source = tmp_path / "hull.stl"
+    source.write_bytes(b"solid endsolid")
+    model = ingest_file(
+        str(source),
+        folder_id="1",
+        original_filename="hull.stl",
+        move=True,
+        dest_subpath="Vehicles/Tanks",
+    )
+    disk_path = UPLOAD_DIR / "Vehicles" / "Tanks" / f"{model['id']}.stl"
+    assert disk_path.exists()
+
+    response = client.post("/api/models/bulk-delete", json={"ids": [model["id"]]})
+    assert response.status_code == 200
+    assert not disk_path.exists()
+
+    listed = client.get("/api/models", params={"folderId": "1"}).json()
+    assert all(m["id"] != model["id"] for m in listed)
+
+
+def test_replace_model_file_removes_old_subdirectory_file_and_updates_filepath(client, tmp_path):
+    """Replace-file always writes the *new* file flat (pre-existing behavior,
+    unchanged), but must still locate and remove the *old* file wherever it
+    actually is (a wizard-imported model's file may be in a subdirectory), and
+    must update filePath to the new flat location so future lookups don't go
+    stale relative to the just-written file."""
+    from app.services.ingestion import ingest_file
+    from app.db import UPLOAD_DIR, get_db_conn
+
+    source = tmp_path / "hull.stl"
+    source.write_bytes(b"solid original endsolid")
+    model = ingest_file(
+        str(source),
+        folder_id="1",
+        original_filename="hull.stl",
+        move=True,
+        dest_subpath="Vehicles/Tanks",
+    )
+    old_disk_path = UPLOAD_DIR / "Vehicles" / "Tanks" / f"{model['id']}.stl"
+    assert old_disk_path.exists()
+
+    response = client.put(
+        f"/api/models/{model['id']}/file",
+        files={"file": ("hull2.stl", b"solid replacement content endsolid", "application/octet-stream")},
+    )
+    assert response.status_code == 200
+    assert not old_disk_path.exists()  # old subdirectory file was removed
+
+    new_flat_path = UPLOAD_DIR / f"{model['id']}.stl"
+    assert new_flat_path.exists()
+    assert new_flat_path.read_bytes() == b"solid replacement content endsolid"
+
+    conn = get_db_conn()
+    row = conn.execute("SELECT filePath FROM models WHERE id=?", (model["id"],)).fetchone()
+    conn.close()
+    assert row["filePath"] == str(new_flat_path)
+
+    # Download now serves the new flat file, confirming filePath resolution works
+    download = client.get(f"/api/models/{model['id']}/download")
+    assert download.content == b"solid replacement content endsolid"

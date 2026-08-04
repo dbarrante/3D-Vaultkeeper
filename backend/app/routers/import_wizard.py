@@ -31,7 +31,17 @@ class CommitRequest(BaseModel):
 def commit_import(body: CommitRequest):
     results = []
     for placement in body.placements:
-        files = expand_placement(placement.sourcePath, placement.isFolder)
+        try:
+            files = expand_placement(placement.sourcePath, placement.isFolder)
+        except Exception as exc:
+            results.append({
+                "sourcePath": placement.sourcePath,
+                "placementSourcePath": placement.sourcePath,
+                "status": "error",
+                "error": str(exc),
+                "isModel": False,
+            })
+            continue
         for file_path in files:
             result = commit_placement_file(file_path, placement.targetFolderId)
             result["placementSourcePath"] = placement.sourcePath

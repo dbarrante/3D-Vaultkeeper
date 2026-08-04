@@ -1,5 +1,7 @@
 import os
 
+import pytest
+
 
 def test_build_tree_walks_nested_directories_and_flags_model_files(tmp_path):
     from app.services.import_wizard import build_tree
@@ -247,3 +249,115 @@ def test_commit_endpoint_groups_folder_results_under_placement_source(client, tm
     assert len(results) == 2
     assert all(r["placementSourcePath"] == str(kit) for r in results)
     assert all(r["status"] == "ok" for r in results)
+
+
+def test_folder_disk_path_raises_for_unresolvable_folder_id(client):
+    from app.services.import_wizard import folder_disk_path
+
+    with pytest.raises(ValueError):
+        folder_disk_path("does-not-exist")
+
+
+def test_commit_placement_file_reports_error_for_unresolvable_target_folder_and_does_not_move_source(client, tmp_path):
+    from app.services.import_wizard import commit_placement_file
+
+    source = tmp_path / "hull.stl"
+    source.write_bytes(b"solid endsolid")
+
+    result = commit_placement_file(source, "does-not-exist")
+
+    assert result["status"] == "error"
+    assert source.exists()  # a bogus targetFolderId must not delete/relocate the source
+
+
+def test_expand_placement_raises_for_vanished_folder(tmp_path):
+    from app.services.import_wizard import expand_placement
+
+    gone = tmp_path / "never_existed"  # never created
+
+    with pytest.raises(Exception):
+        expand_placement(str(gone), is_folder=True)
+
+
+def test_expand_placement_returns_empty_list_for_genuinely_empty_folder(tmp_path):
+    from app.services.import_wizard import expand_placement
+
+    empty = tmp_path / "Empty Kit"
+    empty.mkdir()
+
+    result = expand_placement(str(empty), is_folder=True)
+
+    assert result == []
+
+
+def test_commit_endpoint_reports_error_for_vanished_folder_placement_without_crashing_batch(client, tmp_path):
+    from app.db import get_db_conn
+    conn = get_db_conn()
+    conn.execute("INSERT INTO folders(id,name,parentId) VALUES (?,?,?)", ("f1", "Vehicles", None))
+    conn.commit()
+    conn.close()
+
+    gone = tmp_path / "never_existed"  # never created
+
+    resp = client.post("/api/import/commit", json={
+        "placements": [
+            {"sourcePath": str(gone), "isFolder": True, "targetFolderId": "f1"},
+        ]
+    })
+
+    assert resp.status_code == 200
+    results = resp.json()["results"]
+    assert len(results) == 1
+    assert results[0]["status"] == "error"
+    assert results[0]["placementSourcePath"] == str(gone)
+
+
+def test_commit_endpoint_one_bad_placement_does_not_block_a_sibling_placement(client, tmp_path):
+    from app.db import get_db_conn
+    conn = get_db_conn()
+    conn.execute("INSERT INTO folders(id,name,parentId) VALUES (?,?,?)", ("f1", "Vehicles", None))
+    conn.commit()
+    conn.close()
+
+    gone = tmp_path / "never_existed"  # never created
+    good = tmp_path / "good.stl"
+    good.write_bytes(b"solid endsolid")
+
+    resp = client.post("/api/import/commit", json={
+        "placements": [
+            {"sourcePath": str(gone), "isFolder": True, "targetFolderId": "f1"},
+            {"sourcePath": str(good), "isFolder": False, "targetFolderId": "f1"},
+        ]
+    })
+
+    assert resp.status_code == 200
+    results = resp.json()["results"]
+    statuses = {r["placementSourcePath"]: r["status"] for r in results}
+    assert statuses[str(gone)] == "error"
+    assert statuses[str(good)] == "ok"
+
+
+def test_commit_endpoint_empty_folder_placement_produces_no_results_and_no_error(client, tmp_path):
+    from app.db import get_db_conn
+    conn = get_db_conn()
+    conn.execute("INSERT INTO folders(id,name,parentId) VALUES (?,?,?)", ("f1", "Vehicles", None))
+    conn.commit()
+    conn.close()
+
+    empty = tmp_path / "Empty Kit"
+    empty.mkdir()
+    good = tmp_path / "good.stl"
+    good.write_bytes(b"solid endsolid")
+
+    resp = client.post("/api/import/commit", json={
+        "placements": [
+            {"sourcePath": str(empty), "isFolder": True, "targetFolderId": "f1"},
+            {"sourcePath": str(good), "isFolder": False, "targetFolderId": "f1"},
+        ]
+    })
+
+    assert resp.status_code == 200
+    results = resp.json()["results"]
+    assert len(results) == 1
+    assert results[0]["sourcePath"] == str(good)
+    assert results[0]["status"] == "ok"

@@ -56,35 +56,55 @@ def folder_disk_path(folder_id: str) -> str:
     sanitized -- e.g. "Tanks" under "Vehicles" returns "Vehicles/Tanks".
     Used as ingest_file's dest_subpath so wizard-imported files land in
     real subdirectories mirroring the logical folder the user placed
-    them in.
+    them in. Raises ValueError if folder_id itself doesn't exist -- an
+    orphaned *ancestor* further up an otherwise-valid chain is tolerated
+    (uses whatever resolved so far), but the placement's own target
+    folder must be real.
     """
     conn = get_db_conn()
-    segments = []
-    current_id = folder_id
-    while current_id is not None:
-        row = conn.execute(
-            "SELECT name, parentId FROM folders WHERE id=?", (current_id,)
-        ).fetchone()
-        if row is None:
-            break
-        segments.append(sanitize_path_segment(row["name"]))
-        current_id = row["parentId"]
-    conn.close()
-    return os.path.join(*reversed(segments)) if segments else ""
+    try:
+        segments = []
+        current_id = folder_id
+        is_first = True
+        while current_id is not None:
+            row = conn.execute(
+                "SELECT name, parentId FROM folders WHERE id=?", (current_id,)
+            ).fetchone()
+            if row is None:
+                if is_first:
+                    raise ValueError(f"Folder not found: {folder_id}")
+                break
+            segments.append(sanitize_path_segment(row["name"]))
+            current_id = row["parentId"]
+            is_first = False
+        return os.path.join(*reversed(segments)) if segments else ""
+    finally:
+        conn.close()
 
 
 def expand_placement(source_path: str, is_folder: bool) -> list:
     """A loose-file placement is itself; a folder placement is every file
     found by walking it recursively -- this is what makes dragging one
     folder bring every file inside it along, without the user having to
-    select each file individually.
+    select each file individually. Raises if the folder no longer exists
+    or any subdirectory inside it can't be read, rather than silently
+    returning an empty list indistinguishable from a genuinely empty
+    (but fully readable) folder -- callers should treat a raise here as
+    "nothing in this placement was moved, safe to retry once fixed,"
+    not attempt to salvage a partial listing.
     """
     if not is_folder:
         return [Path(source_path)]
+    root = Path(source_path)
+    if not root.is_dir():
+        raise FileNotFoundError(f"Folder no longer exists: {source_path}")
     found = []
-    for dirpath, _dirnames, filenames in os.walk(source_path):
+    walk_errors = []
+    for dirpath, _dirnames, filenames in os.walk(source_path, onerror=walk_errors.append):
         for fname in filenames:
             found.append(Path(dirpath) / fname)
+    if walk_errors:
+        raise OSError(f"Could not fully read {source_path}: {walk_errors[0]}")
     return found
 
 

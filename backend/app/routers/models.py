@@ -14,6 +14,22 @@ from app.services.ingestion import ingest_file
 router = APIRouter()
 
 
+def _resolve_copy_mode_file(model_id: str, file_path: Optional[str]) -> Optional[str]:
+    """Locate a copy-mode model's physical file. Prefers filePath (the
+    real current location -- correct for both flat legacy uploads and
+    wizard-imported files placed in real subdirectories) and falls back
+    to the historical flat os.listdir(UPLOAD_DIR) + id-prefix match only
+    if filePath is missing or stale (e.g. a row that somehow predates
+    the Task 1 backfill).
+    """
+    if file_path and os.path.exists(file_path):
+        return file_path
+    for fname in os.listdir(UPLOAD_DIR):
+        if fname.startswith(model_id):
+            return os.path.join(UPLOAD_DIR, fname)
+    return None
+
+
 def get_model_info(modelId):
     conn = get_db_conn()
     cur = conn.cursor()
@@ -107,12 +123,12 @@ def delete_model(model_id: str, deleteFile: bool = False):
         conn.commit()
         conn.close()
         return {"ok": True}
-    for fname in os.listdir(UPLOAD_DIR):
-        if fname.startswith(model_id):
-            try:
-                os.remove(os.path.join(UPLOAD_DIR, fname))
-            except Exception:
-                pass
+    resolved = _resolve_copy_mode_file(model_id, m["filePath"] if "filePath" in m.keys() else None)
+    if resolved:
+        try:
+            os.remove(resolved)
+        except Exception:
+            pass
     if m["storageMode"] == "reference" and deleteFile and m["sourcePath"]:
         try:
             os.remove(m["sourcePath"])
@@ -145,13 +161,9 @@ def download_model(model_id: str):
             status_code=404,
             detail=f"File not found at {source_path} — it may have been moved or deleted outside STLVault.",
         )
-    for fname in os.listdir(UPLOAD_DIR):
-        if fname.startswith(model_id):
-            return FileResponse(
-                os.path.join(UPLOAD_DIR, fname),
-                media_type="application/octet-stream",
-                filename=m_info["name"],
-            )
+    resolved = _resolve_copy_mode_file(model_id, m_info.get("filePath"))
+    if resolved:
+        return FileResponse(resolved, media_type="application/octet-stream", filename=m_info["name"])
     raise HTTPException(status_code=404, detail="File not found")
 
 
@@ -161,18 +173,18 @@ def bulk_delete(payload: dict):
     conn = get_db_conn()
     cur = conn.cursor()
     for mid in ids:
-        row = cur.execute("SELECT storageMode FROM models WHERE id=?", (mid,)).fetchone()
+        row = cur.execute("SELECT storageMode, filePath FROM models WHERE id=?", (mid,)).fetchone()
         if row and row["storageMode"] == "reference":
             # Tombstone reference-mode models: sourcePath stays intact so a future
             # watch-folder scan still recognizes the file as already ingested.
             cur.execute("UPDATE models SET removedAt=? WHERE id=?", (now_ms(), mid))
             continue
-        for fname in os.listdir(UPLOAD_DIR):
-            if fname.startswith(mid):
-                try:
-                    os.remove(os.path.join(UPLOAD_DIR, fname))
-                except Exception:
-                    pass
+        resolved = _resolve_copy_mode_file(mid, row["filePath"] if row else None)
+        if resolved:
+            try:
+                os.remove(resolved)
+            except Exception:
+                pass
         manual_path = MANUAL_DIR / f"{mid}.md"
         if manual_path.exists():
             try:
@@ -242,20 +254,20 @@ def replace_model_file(model_id: str, file: UploadFile = File(...), thumbnail: O
             status_code=400,
             detail="This model references a file on disk — replacing its content isn't supported here. Delete it and re-add the file directly in its folder instead.",
         )
-    for fname in os.listdir(UPLOAD_DIR):
-        if fname.startswith(model_id):
-            try:
-                os.remove(os.path.join(UPLOAD_DIR, fname))
-            except Exception:
-                pass
+    resolved = _resolve_copy_mode_file(model_id, m["filePath"] if "filePath" in m.keys() else None)
+    if resolved:
+        try:
+            os.remove(resolved)
+        except Exception:
+            pass
     filename_str = file.filename or ".stl"
     ext = os.path.splitext(filename_str)[-1] or ".stl"
     filename = f"{model_id}{ext}"
     path = os.path.join(UPLOAD_DIR, filename)
     size = save_upload_file(file, path)
     cur.execute(
-        "UPDATE models SET url=?, size=?, thumbnail=? WHERE id=?",
-        (f"/api/models/{model_id}/download", size, thumbnail, model_id),
+        "UPDATE models SET url=?, size=?, thumbnail=?, filePath=? WHERE id=?",
+        (f"/api/models/{model_id}/download", size, thumbnail, path, model_id),
     )
     conn.commit()
     row = cur.execute("SELECT * FROM models WHERE id=?", (model_id,)).fetchone()

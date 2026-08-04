@@ -106,15 +106,25 @@ def ingest_file(
 
     conn = get_db_conn()
     cur = conn.cursor()
-    cur.execute(
-        "INSERT INTO models(id,name,folderId,url,size,dateAdded,tags,description,thumbnail,sourcePath,storageMode,filePath) "
-        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
-        (
-            model["id"], model["name"], model["folderId"], model["url"], model["size"],
-            model["dateAdded"], json.dumps(model["tags"]), model["description"], model["thumbnail"],
-            source_to_record, storage_mode, model["filePath"],
-        ),
-    )
-    conn.commit()
-    conn.close()
+    try:
+        cur.execute(
+            "INSERT INTO models(id,name,folderId,url,size,dateAdded,tags,description,thumbnail,sourcePath,storageMode,filePath) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                model["id"], model["name"], model["folderId"], model["url"], model["size"],
+                model["dateAdded"], json.dumps(model["tags"]), model["description"], model["thumbnail"],
+                source_to_record, storage_mode, model["filePath"],
+            ),
+        )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        if not reference_only and os.path.exists(dest_path):
+            if move:
+                shutil.move(dest_path, source_path)  # restore the original location
+            else:
+                os.remove(dest_path)  # just clean up the copy; source was never touched
+        raise
+    finally:
+        conn.close()
     return model
