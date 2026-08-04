@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { Folder as FolderIcon, File as FileIcon, X, Plus } from "lucide-react";
+import { Folder as FolderIcon, File as FileIcon, X, Plus, ChevronDown, ChevronRight } from "lucide-react";
 import { api } from "../services/api";
 import { Folder, ImportTreeNode, ImportPlacement } from "../types";
 
@@ -31,6 +31,16 @@ const ImportWizard: React.FC<ImportWizardProps> = ({
   const [step, setStep] = useState<"stage" | "review" | "results">("stage");
   const [results, setResults] = useState<{ sourcePath: string; placementSourcePath: string; status: "ok" | "error"; error?: string; isModel: boolean }[]>([]);
   const [committing, setCommitting] = useState(false);
+  const [expandedRawPaths, setExpandedRawPaths] = useState<Set<string>>(new Set());
+
+  const toggleRawExpand = (path: string) => {
+    setExpandedRawPaths((prev) => {
+      const next = new Set(prev);
+      if (next.has(path)) next.delete(path);
+      else next.add(path);
+      return next;
+    });
+  };
 
   useEffect(() => {
     api
@@ -101,17 +111,58 @@ const ImportWizard: React.FC<ImportWizardProps> = ({
   const rootFolders = folders.filter((f) => f.parentId === null);
   const childFolders = (parentId: string) => folders.filter((f) => f.parentId === parentId);
 
-  const renderRawNode = (node: { name: string; path: string }, isFolder: boolean) => (
+  const renderRawFolder = (node: ImportTreeNode, depth = 0): React.ReactNode => {
+    const isExpanded = expandedRawPaths.has(node.path);
+    const staged = placements.find((p) => p.sourcePath === node.path);
+    const hasChildren = node.folders.length > 0 || node.files.length > 0;
+    return (
+      <div key={node.path}>
+        <div
+          draggable
+          onDragStart={(e) => {
+            e.stopPropagation();
+            e.dataTransfer.setData("text/plain", JSON.stringify({ path: node.path, isFolder: true }));
+          }}
+          onClick={() => hasChildren && toggleRawExpand(node.path)}
+          style={{ paddingLeft: `${depth * 16}px` }}
+          className="flex items-center gap-2 px-2 py-1 rounded cursor-pointer hover:bg-vault-800"
+        >
+          {hasChildren ? (
+            isExpanded ? <ChevronDown className="w-3 h-3 text-slate-500 shrink-0" /> : <ChevronRight className="w-3 h-3 text-slate-500 shrink-0" />
+          ) : (
+            <span className="w-3 shrink-0" />
+          )}
+          <FolderIcon className="w-4 h-4 text-blue-400 shrink-0" />
+          <span className="text-sm truncate">{node.name}</span>
+          {staged && (
+            <span className="text-xs text-green-400 ml-auto shrink-0">→ {staged.targetLabel}</span>
+          )}
+        </div>
+        {isExpanded && (
+          <div>
+            {node.folders.map((f) => renderRawFolder(f, depth + 1))}
+            {node.files.map((f) => renderRawFile(f, depth + 1))}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  const renderRawFile = (node: { name: string; path: string }, depth = 0) => (
     <div
       key={node.path}
       draggable
-      onDragStart={(e) => e.dataTransfer.setData("text/plain", JSON.stringify({ path: node.path, isFolder }))}
+      onDragStart={(e) => {
+        e.stopPropagation();
+        e.dataTransfer.setData("text/plain", JSON.stringify({ path: node.path, isFolder: false }));
+      }}
+      style={{ paddingLeft: `${depth * 16 + 20}px` }}
       className="flex items-center gap-2 px-2 py-1 rounded cursor-grab hover:bg-vault-800"
     >
-      {isFolder ? <FolderIcon className="w-4 h-4 text-blue-400" /> : <FileIcon className="w-4 h-4 text-slate-400" />}
+      <FileIcon className="w-4 h-4 text-slate-400 shrink-0" />
       <span className="text-sm truncate">{node.name}</span>
       {placements.some((p) => p.sourcePath === node.path) && (
-        <span className="text-xs text-green-400 ml-auto">
+        <span className="text-xs text-green-400 ml-auto shrink-0">
           → {placements.find((p) => p.sourcePath === node.path)?.targetLabel}
         </span>
       )}
@@ -174,8 +225,8 @@ const ImportWizard: React.FC<ImportWizardProps> = ({
                 <p className="text-xs text-slate-500 mb-2">On disk: {rootPath}</p>
                 {tree && (
                   <>
-                    {tree.folders.map((f) => renderRawNode(f, true))}
-                    {tree.files.map((f) => renderRawNode(f, false))}
+                    {tree.folders.map((f) => renderRawFolder(f, 0))}
+                    {tree.files.map((f) => renderRawFile(f, 0))}
                   </>
                 )}
               </div>

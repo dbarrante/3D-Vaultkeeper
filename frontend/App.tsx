@@ -220,9 +220,22 @@ const App = () => {
     return previews;
   }, [models]);
 
-  // Clear selection when changing folders to avoid confusion
+  // Clear selection when changing folders to avoid confusion. This must
+  // depend only on navigation (currentFolderId, viewMode) -- not on
+  // `folders`, which gets a fresh array identity on every Settings-close
+  // refetch and every create/rename/delete, unrelated to navigation. If
+  // this effect depended on `folders`, e.g. creating a new folder while
+  // 20 models are selected (to drag them into it) would wipe the
+  // selection before the drag could happen.
   useEffect(() => {
     setSelectedIds(new Set());
+  }, [currentFolderId, viewMode]);
+
+  // Derive the parent of the current folder, for the sidebar's "back" /
+  // breadcrumb navigation. This does need `folders` to look up the
+  // parent in Logical mode, so it stays in its own effect rather than
+  // sharing one with the selection-clear above.
+  useEffect(() => {
     if (viewMode === "file") {
       // Synthetic file-mode ids have no row in `folders` to look up --
       // derive the parent by stripping the last path segment instead.

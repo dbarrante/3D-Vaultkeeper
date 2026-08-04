@@ -565,6 +565,7 @@ const Sidebar: React.FC<SidebarProps> = ({
           ) : (
             <RichTreeView
               items={fileTree}
+              selectedItems={currentFolderId}
               onSelectedItemsChange={(_e, itemId) => {
                 if (itemId) onSelectFolder(itemId as string);
               }}
