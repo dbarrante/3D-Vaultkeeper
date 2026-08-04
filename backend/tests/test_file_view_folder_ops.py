@@ -371,6 +371,55 @@ def test_delete_folder_refuses_path_outside_managed_library_and_watch_roots(clie
     assert survivor.read_text() == "do not delete me"
 
 
+def test_delete_folder_refuses_upload_dir_itself(client, tmp_path):
+    """UPLOAD_DIR is the app's own managed copy-mode storage root. It isn't a
+    watch_folders row, so the watch-root exact-match check doesn't cover it, and
+    resolve_storage_mode_for_path explicitly ALLOWS resolved == upload_root (that
+    check exists to permit copy-mode operations inside the library, not to protect
+    the root itself). Without a dedicated guard, deleting UPLOAD_DIR would hard-
+    delete every copy-mode model row and rmtree the entire managed library in one
+    call. Must be rejected exactly like a watch folder's root.
+    """
+    upload_dir = Path(os.environ["FILE_STORAGE"])
+    survivor = upload_dir / "keep.txt"
+    survivor.write_text("do not delete me")
+
+    resp = client.request("DELETE", "/api/file-view/folder", json={"path": str(upload_dir)})
+    assert resp.status_code // 100 == 4
+    assert upload_dir.exists()
+    assert survivor.exists()
+    assert survivor.read_text() == "do not delete me"
+
+
+def test_delete_folder_reports_partial_failure_when_rmtree_cannot_fully_remove_directory(client, tmp_path, monkeypatch):
+    """By the time shutil.rmtree runs, every matched model's DB row is already
+    deleted and its file already removed -- that part of the operation genuinely
+    succeeded. If rmtree itself then fails (e.g. a file locked by another process,
+    realistic for a .stl held open by a slicer on Windows), the endpoint must not
+    silently report full success: ignore_errors=True previously swallowed this
+    completely. Simulate the failure by monkeypatching shutil.rmtree to raise,
+    since there's no cross-platform way to reliably create a genuinely undeletable
+    file in a test.
+    """
+    import app.routers.file_view as file_view_module
+
+    upload_dir = Path(os.environ["FILE_STORAGE"])
+    target_dir = upload_dir / "Locked"
+    target_dir.mkdir()
+    (target_dir / "held.stl").write_text("data")
+
+    def raising_rmtree(path):
+        raise OSError("simulated: file in use by another process")
+
+    monkeypatch.setattr(file_view_module.shutil, "rmtree", raising_rmtree)
+
+    resp = client.request("DELETE", "/api/file-view/folder", json={"path": str(target_dir)})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["directoryRemoved"] is False, "must not silently claim success when rmtree failed"
+    assert target_dir.exists()  # rmtree never actually ran (patched), directory survives
+
+
 def test_move_folder_into_own_subtree_rejected(client, tmp_path):
     """Moving "Tanks" to a targetPath nested inside "Tanks" itself
     (e.g. UPLOAD_DIR/Tanks/Sub/Tanks) must be rejected before

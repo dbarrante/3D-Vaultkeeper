@@ -5,7 +5,7 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from app.db import get_db_conn, MANUAL_DIR
+from app.db import get_db_conn, MANUAL_DIR, UPLOAD_DIR
 from app.services.file_view_ops import (
     rewrite_affected_paths,
     resolve_storage_mode_for_path,
@@ -99,6 +99,9 @@ def delete_folder(body: FolderDeleteRequest):
             detail="Refusing to delete a watched folder's root. Remove it from Watch Folders first if you really want to delete it.",
         )
 
+    if resolved == Path(UPLOAD_DIR).resolve():
+        raise HTTPException(status_code=400, detail="Refusing to delete the entire managed library folder.")
+
     try:
         resolve_storage_mode_for_path(target)
     except ValueError as exc:
@@ -129,5 +132,16 @@ def delete_folder(body: FolderDeleteRequest):
     finally:
         conn.close()
 
-    shutil.rmtree(target, ignore_errors=True)
-    return {"deletedModels": deleted, "path": str(target)}
+    try:
+        shutil.rmtree(target)
+        directory_removed = True
+    except OSError:
+        # Model rows and their files are already gone at this point -- that part of
+        # the operation genuinely succeeded. But if rmtree hit something it couldn't
+        # remove (e.g. a file locked by another process on Windows), silently
+        # swallowing that with ignore_errors=True would report full success while
+        # the directory (or part of it) is still sitting on disk with no DB record
+        # pointing at it anymore. Surface the partial failure instead.
+        directory_removed = not target.exists()
+
+    return {"deletedModels": deleted, "path": str(target), "directoryRemoved": directory_removed}
