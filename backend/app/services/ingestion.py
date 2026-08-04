@@ -18,6 +18,7 @@ def ingest_file(
     record_source: bool = False,
     pickup_sidecar_notes: bool = False,
     reference_only: bool = False,
+    dest_subpath: Optional[str] = None,
 ) -> dict:
     """Put a file already on disk into the library and register it as a model.
     Shared by manual upload, the folder watcher (Phase 1), and the acquisition
@@ -51,6 +52,14 @@ def ingest_file(
     and uses its text as the model's initial description. Off by default:
     upload_model's source_path is a disposable temp file with no meaningful
     siblings, so there's nothing useful to look for there.
+
+    dest_subpath (Import Wizard): places the copy-mode file inside
+    UPLOAD_DIR/<dest_subpath>/ instead of flat in UPLOAD_DIR, creating the
+    subdirectory if needed. The physical filename is still the opaque
+    <id><ext> convention below -- this only changes which directory it
+    lands in, so the existing collision-avoidance is unaffected. None
+    (the default) preserves today's flat behavior for every existing
+    caller (manual upload, the watcher, the acquisition queue).
     """
     mid = str(uuid.uuid4())
     ext = os.path.splitext(original_filename)[1] or ".stl"
@@ -63,13 +72,22 @@ def ingest_file(
 
     if reference_only:
         size = os.path.getsize(source_path)
+        file_path_value = source_path
     else:
-        dest_path = os.path.join(UPLOAD_DIR, f"{mid}{ext}")
+        if dest_subpath:
+            # Normalize path separators to OS-specific ones
+            normalized_subpath = os.path.normpath(dest_subpath)
+            dest_dir = os.path.join(UPLOAD_DIR, normalized_subpath)
+        else:
+            dest_dir = UPLOAD_DIR
+        os.makedirs(dest_dir, exist_ok=True)
+        dest_path = os.path.join(dest_dir, f"{mid}{ext}")
         if move:
             shutil.move(source_path, dest_path)
         else:
             shutil.copyfile(source_path, dest_path)
         size = os.path.getsize(dest_path)
+        file_path_value = dest_path
 
     model = {
         "id": mid,
@@ -81,6 +99,7 @@ def ingest_file(
         "tags": tags or [],
         "description": description,
         "thumbnail": thumbnail,
+        "filePath": file_path_value,
     }
     storage_mode = "reference" if reference_only else "copy"
     source_to_record = source_path if (record_source or reference_only) else None
@@ -88,12 +107,12 @@ def ingest_file(
     conn = get_db_conn()
     cur = conn.cursor()
     cur.execute(
-        "INSERT INTO models(id,name,folderId,url,size,dateAdded,tags,description,thumbnail,sourcePath,storageMode) "
-        "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+        "INSERT INTO models(id,name,folderId,url,size,dateAdded,tags,description,thumbnail,sourcePath,storageMode,filePath) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
         (
             model["id"], model["name"], model["folderId"], model["url"], model["size"],
             model["dateAdded"], json.dumps(model["tags"]), model["description"], model["thumbnail"],
-            source_to_record, storage_mode,
+            source_to_record, storage_mode, model["filePath"],
         ),
     )
     conn.commit()

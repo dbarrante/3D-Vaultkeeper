@@ -130,3 +130,51 @@ def test_ingest_file_default_copy_mode_unaffected(client, tmp_path):
     row = conn.execute("SELECT storageMode FROM models WHERE id=?", (model["id"],)).fetchone()
     conn.close()
     assert row["storageMode"] == "copy"
+
+
+def test_ingest_file_with_dest_subpath_places_file_in_subdirectory(client, tmp_path):
+    from app.services.ingestion import ingest_file
+    from app.db import UPLOAD_DIR
+
+    source = tmp_path / "hull.stl"
+    source.write_bytes(b"solid hull endsolid")
+
+    model = ingest_file(
+        str(source),
+        folder_id="1",
+        original_filename="hull.stl",
+        move=True,
+        dest_subpath="Vehicles/Tanks",
+    )
+
+    expected_dir = UPLOAD_DIR / "Vehicles" / "Tanks"
+    assert os.path.isdir(expected_dir)
+    assert os.path.exists(os.path.join(expected_dir, f"{model['id']}.stl"))
+    assert model["filePath"] == os.path.join(str(expected_dir), f"{model['id']}.stl")
+    assert not source.exists()  # move=True
+
+
+def test_ingest_file_without_dest_subpath_stays_flat(client, tmp_path):
+    from app.services.ingestion import ingest_file
+    from app.db import UPLOAD_DIR
+
+    source = tmp_path / "flat.stl"
+    source.write_bytes(b"solid flat endsolid")
+
+    model = ingest_file(str(source), folder_id="1", original_filename="flat.stl")
+
+    assert os.path.exists(os.path.join(UPLOAD_DIR, f"{model['id']}.stl"))
+    assert model["filePath"] == os.path.join(str(UPLOAD_DIR), f"{model['id']}.stl")
+
+
+def test_ingest_file_reference_only_sets_file_path_to_source(client, tmp_path):
+    from app.services.ingestion import ingest_file
+
+    source = tmp_path / "linked.stl"
+    source.write_bytes(b"solid linked endsolid")
+
+    model = ingest_file(
+        str(source), folder_id="1", original_filename="linked.stl", reference_only=True
+    )
+
+    assert model["filePath"] == str(source)
