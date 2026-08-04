@@ -147,6 +147,30 @@ const App = () => {
       ? folders.filter((f) => f.parentId == null)
       : folders.filter((f) => f.parentId === currentFolderId);
 
+  // One card per folder in ModelList shows a representative thumbnail +
+  // part count instead of a plain folder icon when the folder has models
+  // directly inside (see ModelList.tsx's folder-tile rendering) — this is
+  // built the same way Sidebar.tsx's own folderCounts already counts
+  // direct children from the full models array, extended to also track
+  // whichever direct child was added first (smallest dateAdded) as the
+  // representative thumbnail. A plain const, not useMemo, to match this
+  // component's existing filteredModels/filteredFolders right above it.
+  const folderPreviews: Record<string, { count: number; thumbnail: string | null }> = {};
+  const earliestDateAddedByFolder: Record<string, number> = {};
+  models.forEach((m) => {
+    if (!folderPreviews[m.folderId]) {
+      folderPreviews[m.folderId] = { count: 0, thumbnail: null };
+    }
+    folderPreviews[m.folderId].count += 1;
+    if (
+      earliestDateAddedByFolder[m.folderId] === undefined ||
+      m.dateAdded < earliestDateAddedByFolder[m.folderId]
+    ) {
+      earliestDateAddedByFolder[m.folderId] = m.dateAdded;
+      folderPreviews[m.folderId].thumbnail = m.thumbnail || null;
+    }
+  });
+
   // Clear selection when changing folders to avoid confusion
   useEffect(() => {
     setSelectedIds(new Set());
@@ -714,6 +738,7 @@ const App = () => {
                 <ModelList
                   models={filteredModels}
                   folders={filteredFolders}
+                  folderPreviews={folderPreviews}
                   currentFolderName={currentFolderName}
                   onBackNavigation={() => {
                     setCurrentFolderId(currentFolderParentId);
