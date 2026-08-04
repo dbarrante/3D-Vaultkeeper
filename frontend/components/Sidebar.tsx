@@ -434,7 +434,21 @@ const Sidebar: React.FC<SidebarProps> = ({
     const isCopy = e.ctrlKey;
     try {
       if (isCopy) {
-        await api.duplicateModel(modelId);
+        // duplicateModel always lands the copy beside the original (same
+        // folder as the source) -- it has no notion of a drop target. A
+        // drag-and-drop copy DID specify a destination (wherever the user
+        // dropped it), so a second step relocates the freshly-created
+        // duplicate into targetDir, reusing the same updateModelLocation
+        // call the move branch already uses. The duplicate's own filePath
+        // is used for its filename (not the original's `filename` var)
+        // since duplicateModel gives the copy a fresh UUID-based filename.
+        const duplicated = await api.duplicateModel(modelId);
+        const duplicatedFilename =
+          duplicated.filePath?.split(/[\\/]/).pop() || duplicated.name;
+        await api.updateModelLocation(
+          duplicated.id,
+          `${targetDir}/${duplicatedFilename}`,
+        );
       } else {
         await api.updateModelLocation(modelId, `${targetDir}/${filename}`);
       }
