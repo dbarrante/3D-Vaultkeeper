@@ -13,7 +13,7 @@ import {
   PlusIcon,
 } from "lucide-react";
 import { Folder, STLModel, StorageStats } from "../types";
-import { FILE_VIEW_UPLOADS_BUCKET_ID } from "../types";
+import { FILE_VIEW_UPLOADS_BUCKET_ID, fileViewSegments } from "../types";
 
 import Stack from "@mui/material/Stack";
 import IconButton from "@mui/material/IconButton";
@@ -52,9 +52,11 @@ interface SidebarProps {
   onUploadToFolder: (folderId: string, files: FileList) => void;
   onOpenSettings: () => void;
   variant?: "desktop" | "mobile";
-  // Optional (not required) purely so this task doesn't have to touch
-  // App.tsx's existing <Sidebar> call sites, which is Task 10's job --
-  // name and signature are exactly what Task 10 expects to pass in.
+  // Controlled by App.tsx (Task 10) -- Sidebar no longer owns this as
+  // local state, since the mobile drawer unmounts/remounts on close/open
+  // and a local useState would silently reset to "logical" on reopen,
+  // desyncing from App's own copy used for grid filtering.
+  viewMode: "logical" | "file";
   onViewModeChange?: (mode: "logical" | "file") => void;
 }
 
@@ -71,12 +73,12 @@ const Sidebar: React.FC<SidebarProps> = ({
   onUploadToFolder,
   onOpenSettings,
   variant = "desktop",
+  viewMode,
   onViewModeChange,
 }) => {
   const isDesktopVariant = variant === "desktop";
   const [isCreatingRoot, setIsCreatingRoot] = useState(false);
   const [newRootName, setNewRootName] = useState("");
-  const [viewMode, setViewMode] = useState<"logical" | "file">("logical");
 
   // State for tree interactions
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
@@ -297,18 +299,10 @@ const Sidebar: React.FC<SidebarProps> = ({
 
     models.forEach((m) => {
       if (!m.filePath) return;
-      const normalized = m.filePath.replace(/\\/g, "/");
-      // Drop the filename, and drop empty segments caused by a leading "/"
-      // (POSIX absolute paths) or accidental "//" -- filePath can be an
-      // absolute path (reference-mode files live wherever the user picked,
-      // copy-mode files resolve UPLOAD_DIR which may itself be absolute),
-      // and an empty segment would otherwise surface as a blank,
-      // unclickable root row instead of the real first directory name.
-      const segments = normalized.split("/").slice(0, -1).filter((s) => s.length > 0);
-      // Segments ending in the flat upload directory itself (no real
-      // subdirectory) collapse to the Uploads bucket.
-      const uploadDirIndex = segments.findIndex((s) => s.toLowerCase() === "uploads");
-      const meaningfulSegments = uploadDirIndex >= 0 ? segments.slice(uploadDirIndex + 1) : segments;
+      // Shared with App.tsx's filteredModels via fileViewSegments (types.ts)
+      // so the tree's node ids and the grid's filter can never derive
+      // different "meaningful segments" for the same file.
+      const meaningfulSegments = fileViewSegments(m.filePath);
 
       if (meaningfulSegments.length === 0) {
         if (!root.childMap[FILE_VIEW_UPLOADS_BUCKET_ID]) {
@@ -546,19 +540,13 @@ const Sidebar: React.FC<SidebarProps> = ({
         <div className="space-y-1 pb-4 ">
           <div className="flex gap-1 px-1 mb-2">
             <button
-              onClick={() => {
-                setViewMode("logical");
-                onViewModeChange?.("logical");
-              }}
+              onClick={() => onViewModeChange?.("logical")}
               className={`flex-1 text-xs py-1 rounded ${viewMode === "logical" ? "bg-blue-600 text-white" : "bg-vault-800 text-slate-400"}`}
             >
               Logical
             </button>
             <button
-              onClick={() => {
-                setViewMode("file");
-                onViewModeChange?.("file");
-              }}
+              onClick={() => onViewModeChange?.("file")}
               className={`flex-1 text-xs py-1 rounded ${viewMode === "file" ? "bg-blue-600 text-white" : "bg-vault-800 text-slate-400"}`}
             >
               File

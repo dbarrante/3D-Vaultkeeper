@@ -11,6 +11,7 @@ import {
   StorageStats,
   STLModelCollection,
   FILE_VIEW_UPLOADS_BUCKET_ID,
+  fileViewSegments,
 } from "./types";
 import { generateThumbnail } from "./services/thumbnailGenerator";
 import { api, resolveApiOrigin } from "./services/api";
@@ -154,22 +155,21 @@ const App = () => {
     if (viewMode === "file") {
       if (currentFolderId === "all") return models;
       if (currentFolderId === FILE_VIEW_UPLOADS_BUCKET_ID) {
-        return models.filter((m) => {
-          if (!m.filePath) return false;
-          const normalized = m.filePath.replace(/\\/g, "/");
-          const segments = normalized.split("/").slice(0, -1);
-          return segments.length === 0 || segments[segments.length - 1].toLowerCase() === "uploads";
-        });
+        return models.filter((m) => m.filePath && fileViewSegments(m.filePath).length === 0);
       }
       // fileTree node ids are built in Sidebar.tsx as "file/<segment>/<segment>/..."
-      // (see Task 9) -- strip that prefix to get the real path segments this
-      // node represents, then match any model whose filePath passes through
-      // that directory.
-      const prefix = currentFolderId.replace(/^file\//, "") + "/";
+      // (see Task 9) -- strip that prefix to get the target path segments,
+      // then require a model's own segments (via the shared fileViewSegments
+      // helper, so this can never drift from how Sidebar built the tree) to
+      // match positionally at the same indices. Positional comparison (not a
+      // substring search) avoids conflating the same folder name appearing at
+      // two different depths, e.g. uploads/Tanks vs uploads/Vehicles/Tanks.
+      const targetSegments = currentFolderId.replace(/^file\//, "").split("/");
       return models.filter((m) => {
         if (!m.filePath) return false;
-        const normalized = m.filePath.replace(/\\/g, "/");
-        return normalized.includes(`/${prefix}`);
+        const modelSegments = fileViewSegments(m.filePath);
+        if (modelSegments.length < targetSegments.length) return false;
+        return targetSegments.every((seg, i) => modelSegments[i] === seg);
       });
     }
     return currentFolderId === "all"
@@ -223,12 +223,27 @@ const App = () => {
   // Clear selection when changing folders to avoid confusion
   useEffect(() => {
     setSelectedIds(new Set());
+    if (viewMode === "file") {
+      // Synthetic file-mode ids have no row in `folders` to look up --
+      // derive the parent by stripping the last path segment instead.
+      // The Uploads bucket has no deeper parent, so it (like a top-level
+      // segment) goes back to "all".
+      if (currentFolderId === "all" || currentFolderId === FILE_VIEW_UPLOADS_BUCKET_ID) {
+        setCurrentFolderParentId("all");
+      } else {
+        const segments = currentFolderId.replace(/^file\//, "").split("/");
+        setCurrentFolderParentId(
+          segments.length <= 1 ? "all" : `file/${segments.slice(0, -1).join("/")}`,
+        );
+      }
+      return;
+    }
     setCurrentFolderParentId(
       currentFolderId === "all"
         ? "all"
         : folders.find((f) => f.id === currentFolderId)?.parentId || "all",
     );
-  }, [currentFolderId]);
+  }, [currentFolderId, viewMode, folders]);
 
   // Close mobile sidebar when switching to desktop
   useEffect(() => {
@@ -281,7 +296,11 @@ const App = () => {
   const currentFolderName =
     currentFolderId === "all"
       ? "All Models"
-      : folders.find((f) => f.id === currentFolderId)?.name || "Folder";
+      : viewMode === "file"
+        ? currentFolderId === FILE_VIEW_UPLOADS_BUCKET_ID
+          ? "Uploads"
+          : currentFolderId.split("/").pop() || "Folder"
+        : folders.find((f) => f.id === currentFolderId)?.name || "Folder";
 
   const handleCreateFolder = async (
     name: string,
@@ -361,8 +380,11 @@ const App = () => {
     const files = Array.from(fileList);
 
     // If dropping into the general area ("all") and not a specific folder drop
-    // We want to show the modal to let user pick a folder and add tags
-    if (!specificFolderId && currentFolderId === "all") {
+    // We want to show the modal to let user pick a folder and add tags.
+    // In File mode, currentFolderId may hold a synthetic tree id ("file/...",
+    // or the Uploads bucket sentinel) that matches no row in `folders` -- treat
+    // that the same as "all" so we never write a synthetic id as a folderId.
+    if (!specificFolderId && (currentFolderId === "all" || viewMode === "file")) {
       setPendingFiles(files);
       // Default to first folder if available
       setUploadFolderId(folders.length > 0 ? folders[0].id : "");
@@ -400,9 +422,13 @@ const App = () => {
     setImportUrl("");
     setSelectedOptions(new Set());
     setModelsOptions([]);
-    // Pre-select current folder if specific, otherwise first available
+    // Pre-select current folder if specific, otherwise first available.
+    // In File mode, currentFolderId may be a synthetic tree id -- never
+    // pass that through as a real folderId, same treatment as "all".
     setImportFolderId(
-      currentFolderId !== "all" ? currentFolderId : folders[0]?.id || "",
+      currentFolderId !== "all" && viewMode !== "file"
+        ? currentFolderId
+        : folders[0]?.id || "",
     );
     setShowImportModal(true);
   };
@@ -711,6 +737,7 @@ const App = () => {
               handleUpload(files, folderId)
             }
             onOpenSettings={() => setShowSettings(true)}
+            viewMode={viewMode}
             onViewModeChange={(mode) => {
               setViewMode(mode);
               setCurrentFolderId("all"); // avoid a stale id from one mode being misread as the other mode's id
@@ -764,6 +791,7 @@ const App = () => {
                       setShowSettings(true);
                       setIsMobileSidebarOpen(false);
                     }}
+                    viewMode={viewMode}
                     onViewModeChange={(mode) => {
                       setViewMode(mode);
                       setCurrentFolderId("all"); // avoid a stale id from one mode being misread as the other mode's id

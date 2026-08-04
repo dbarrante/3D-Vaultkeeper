@@ -89,6 +89,27 @@ export interface ImportTreeNode {
 // and App.tsx (Task 10, filters by it) so the two never drift apart.
 export const FILE_VIEW_UPLOADS_BUCKET_ID = "__uploads__";
 
+/**
+ * Splits a model's filePath into the "meaningful" path segments used by
+ * File-mode grouping (Sidebar.tsx) and filtering (App.tsx) -- the single
+ * definition both consume, so they can never derive different node ids
+ * for the same file. Normalizes backslashes, drops the filename itself,
+ * and collapses everything up through a literal "uploads" directory
+ * (the flat pre-feature copy-mode storage location) into nothing, so a
+ * model stored flat there has zero meaningful segments and lands in the
+ * synthetic Uploads bucket instead of showing a raw absolute path. A
+ * path with no "uploads" segment at all (e.g. a watch-folder's real
+ * absolute location) keeps its full segment chain, drive letter
+ * included, since that IS the meaningful location for that file.
+ */
+export function fileViewSegments(filePath: string): string[] {
+  const normalized = filePath.replace(/\\/g, "/");
+  const segments = normalized.split("/").filter((s) => s.length > 0);
+  segments.pop(); // drop the filename
+  const uploadDirIndex = segments.findIndex((s) => s.toLowerCase() === "uploads");
+  return uploadDirIndex >= 0 ? segments.slice(uploadDirIndex + 1) : segments;
+}
+
 export interface ImportPlacement {
   sourcePath: string;
   isFolder: boolean;
