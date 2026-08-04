@@ -162,45 +162,58 @@ class LocationUpdate(BaseModel):
 @router.patch("/api/models/{model_id}/location")
 def update_model_location(model_id: str, body: LocationUpdate):
     conn = get_db_conn()
-    cur = conn.cursor()
-    m = cur.execute("SELECT * FROM models WHERE id=?", (model_id,)).fetchone()
-    if not m:
-        conn.close()
-        raise HTTPException(status_code=404, detail="Model not found")
-
-    storage_mode = m["storageMode"] if "storageMode" in m.keys() else "copy"
-    if storage_mode == "reference":
-        current_path = m["sourcePath"]
-    else:
-        current_path = _resolve_copy_mode_file(model_id, m["filePath"] if "filePath" in m.keys() else None)
-    if not current_path or not os.path.exists(current_path):
-        conn.close()
-        raise HTTPException(status_code=404, detail="File not found on disk")
-
     try:
-        destination = validate_destination(body.newPath, storage_mode)
-    except ValueError as exc:
+        cur = conn.cursor()
+        m = cur.execute("SELECT * FROM models WHERE id=?", (model_id,)).fetchone()
+        if not m:
+            raise HTTPException(status_code=404, detail="Model not found")
+
+        storage_mode = m["storageMode"] if "storageMode" in m.keys() else "copy"
+        if storage_mode == "reference":
+            current_path = m["sourcePath"]
+        else:
+            current_path = _resolve_copy_mode_file(model_id, m["filePath"] if "filePath" in m.keys() else None)
+        if not current_path or not os.path.exists(current_path):
+            raise HTTPException(status_code=404, detail="File not found on disk")
+
+        try:
+            destination = validate_destination(body.newPath, storage_mode)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+
+        if destination.exists():
+            raise HTTPException(status_code=409, detail=f"A file already exists at {destination}")
+
+        # Use normpath for persistence to match raw-path convention in the codebase,
+        # not resolve() which can drift from what scan_watch_folder produces
+        persisted_path = os.path.normpath(body.newPath)
+
+        destination.parent.mkdir(parents=True, exist_ok=True)
+
+        shutil.move(current_path, persisted_path)
+
+        try:
+            if storage_mode == "reference":
+                cur.execute(
+                    "UPDATE models SET filePath=?, sourcePath=? WHERE id=?",
+                    (persisted_path, persisted_path, model_id),
+                )
+            else:
+                cur.execute("UPDATE models SET filePath=? WHERE id=?", (persisted_path, model_id))
+            conn.commit()
+        except Exception:
+            # Rollback: move file back to original location if DB write fails
+            # to preserve atomicity (either both file and DB update succeed, or neither)
+            try:
+                shutil.move(persisted_path, current_path)
+            except Exception:
+                pass
+            raise
+
+        row = cur.execute("SELECT * FROM models WHERE id=?", (model_id,)).fetchone()
+        return row_to_model(row)
+    finally:
         conn.close()
-        raise HTTPException(status_code=400, detail=str(exc))
-
-    if destination.exists():
-        conn.close()
-        raise HTTPException(status_code=409, detail=f"A file already exists at {destination}")
-    destination.parent.mkdir(parents=True, exist_ok=True)
-
-    shutil.move(current_path, str(destination))
-
-    if storage_mode == "reference":
-        cur.execute(
-            "UPDATE models SET filePath=?, sourcePath=? WHERE id=?",
-            (str(destination), str(destination), model_id),
-        )
-    else:
-        cur.execute("UPDATE models SET filePath=? WHERE id=?", (str(destination), model_id))
-    conn.commit()
-    row = cur.execute("SELECT * FROM models WHERE id=?", (model_id,)).fetchone()
-    conn.close()
-    return row_to_model(row)
 
 
 @router.get("/api/models/{model_id}/download")
