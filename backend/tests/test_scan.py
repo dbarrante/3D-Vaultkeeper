@@ -212,3 +212,24 @@ def test_get_or_create_folder_distinguishes_by_parent(client):
     under_1 = get_or_create_folder("PrintA", "1")
 
     assert under_none != under_1
+
+
+def test_get_or_create_folder_reuses_existing_top_level_folder(client):
+    """Mirrors test_get_or_create_folder_reuses_existing_folder but for
+    parent_id=None -- the one case that actually exercises the NULL-safe
+    `IS` comparison (parentId=? would never match a NULL column, silently
+    breaking top-level-folder reuse if someone "simplified" IS to =)."""
+    from app.services.scan import get_or_create_folder
+    from app.db import get_db_conn
+
+    first_id = get_or_create_folder("PrintA", None)
+    second_id = get_or_create_folder("PrintA", None)
+
+    assert first_id == second_id
+    conn = get_db_conn()
+    count = conn.execute(
+        "SELECT COUNT(*) as c FROM folders WHERE name=? AND parentId IS NULL",
+        ("PrintA",),
+    ).fetchone()["c"]
+    conn.close()
+    assert count == 1
