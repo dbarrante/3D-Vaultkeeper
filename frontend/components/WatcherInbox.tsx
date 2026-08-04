@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { api } from "../services/api";
 import { Folder, WatchFolder, InboxItem } from "../types";
+import ImportWizard from "./ImportWizard";
 
 const NEW_FOLDER_SENTINEL = "__new__";
 
@@ -44,6 +45,9 @@ const WatcherInbox: React.FC = () => {
   const [inboxScanning, setInboxScanning] = useState(false);
   const [browsing, setBrowsing] = useState(false);
   const [browseNote, setBrowseNote] = useState<string | null>(null);
+
+  const [importRootPath, setImportRootPath] = useState<string | null>(null);
+  const [importBrowsing, setImportBrowsing] = useState(false);
 
   const [creatingFolder, setCreatingFolder] = useState(false);
   const [newFolderName, setNewFolderName] = useState("");
@@ -83,6 +87,18 @@ const WatcherInbox: React.FC = () => {
       setBrowseNote(err.message || "Folder browser unavailable — type the path manually");
     } finally {
       setBrowsing(false);
+    }
+  };
+
+  const handleStartImport = async () => {
+    setImportBrowsing(true);
+    try {
+      const { path } = await api.browseFolder();
+      if (path) setImportRootPath(path);
+    } catch (err: any) {
+      setError(err.message || "Folder browser unavailable");
+    } finally {
+      setImportBrowsing(false);
     }
   };
 
@@ -193,6 +209,15 @@ const WatcherInbox: React.FC = () => {
           library folder you choose. Existing files in the target folder are
           never touched.
         </p>
+
+        <button
+          onClick={handleStartImport}
+          disabled={importBrowsing}
+          className="flex items-center gap-2 px-3 py-2 bg-vault-800 hover:bg-vault-700 rounded text-sm text-slate-200 disabled:opacity-50"
+        >
+          <FolderInput className="w-4 h-4" />
+          {importBrowsing ? "..." : "Import from folder..."}
+        </button>
 
         {watchFolders.length > 0 && (
           <div className="space-y-2 mb-4">
@@ -442,6 +467,15 @@ const WatcherInbox: React.FC = () => {
           </div>
         )}
       </div>
+
+      {importRootPath && (
+        <ImportWizard
+          rootPath={importRootPath}
+          folders={folders}
+          onClose={() => setImportRootPath(null)}
+          onComplete={refresh}
+        />
+      )}
     </>
   );
 };
