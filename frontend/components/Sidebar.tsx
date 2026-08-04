@@ -13,6 +13,7 @@ import {
   PlusIcon,
 } from "lucide-react";
 import { Folder, STLModel, StorageStats } from "../types";
+import { FILE_VIEW_UPLOADS_BUCKET_ID } from "../types";
 
 import Stack from "@mui/material/Stack";
 import IconButton from "@mui/material/IconButton";
@@ -51,6 +52,10 @@ interface SidebarProps {
   onUploadToFolder: (folderId: string, files: FileList) => void;
   onOpenSettings: () => void;
   variant?: "desktop" | "mobile";
+  // Optional (not required) purely so this task doesn't have to touch
+  // App.tsx's existing <Sidebar> call sites, which is Task 10's job --
+  // name and signature are exactly what Task 10 expects to pass in.
+  onViewModeChange?: (mode: "logical" | "file") => void;
 }
 
 const Sidebar: React.FC<SidebarProps> = ({
@@ -66,10 +71,12 @@ const Sidebar: React.FC<SidebarProps> = ({
   onUploadToFolder,
   onOpenSettings,
   variant = "desktop",
+  onViewModeChange,
 }) => {
   const isDesktopVariant = variant === "desktop";
   const [isCreatingRoot, setIsCreatingRoot] = useState(false);
   const [newRootName, setNewRootName] = useState("");
+  const [viewMode, setViewMode] = useState<"logical" | "file">("logical");
 
   // State for tree interactions
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
@@ -278,6 +285,61 @@ const Sidebar: React.FC<SidebarProps> = ({
     return treeitems;
   };
 
+  // Groups every model by its filePath's directory instead of folderId.
+  // Models with no filePath (shouldn't normally happen post-migration, but
+  // defensive) or whose filePath sits directly in the flat pre-feature
+  // upload location (no real subdirectory under it) land in a single
+  // synthetic "Uploads" bucket rather than fabricating structure that was
+  // never there -- see the spec's Non-goals.
+  const fileTree = useMemo(() => {
+    type FileNode = { id: string; label: string; children: FileNode[]; childMap: Record<string, FileNode> };
+    const root: FileNode = { id: "__root__", label: "", children: [], childMap: {} };
+
+    models.forEach((m) => {
+      if (!m.filePath) return;
+      const normalized = m.filePath.replace(/\\/g, "/");
+      // Drop the filename, and drop empty segments caused by a leading "/"
+      // (POSIX absolute paths) or accidental "//" -- filePath can be an
+      // absolute path (reference-mode files live wherever the user picked,
+      // copy-mode files resolve UPLOAD_DIR which may itself be absolute),
+      // and an empty segment would otherwise surface as a blank,
+      // unclickable root row instead of the real first directory name.
+      const segments = normalized.split("/").slice(0, -1).filter((s) => s.length > 0);
+      // Segments ending in the flat upload directory itself (no real
+      // subdirectory) collapse to the Uploads bucket.
+      const uploadDirIndex = segments.findIndex((s) => s.toLowerCase() === "uploads");
+      const meaningfulSegments = uploadDirIndex >= 0 ? segments.slice(uploadDirIndex + 1) : segments;
+
+      if (meaningfulSegments.length === 0) {
+        if (!root.childMap[FILE_VIEW_UPLOADS_BUCKET_ID]) {
+          const node: FileNode = { id: FILE_VIEW_UPLOADS_BUCKET_ID, label: "Uploads", children: [], childMap: {} };
+          root.childMap[FILE_VIEW_UPLOADS_BUCKET_ID] = node;
+          root.children.push(node);
+        }
+        return;
+      }
+
+      let cursor = root;
+      let idPath = "file";
+      meaningfulSegments.forEach((segment) => {
+        idPath += `/${segment}`;
+        if (!cursor.childMap[segment]) {
+          const node: FileNode = { id: idPath, label: segment, children: [], childMap: {} };
+          cursor.childMap[segment] = node;
+          cursor.children.push(node);
+        }
+        cursor = cursor.childMap[segment];
+      });
+    });
+
+    const strip = (node: FileNode): TreeViewDefaultItemModelProperties => ({
+      id: node.id,
+      label: node.label,
+      children: node.children.map(strip),
+    });
+    return root.children.map(strip);
+  }, [models]);
+
   interface CustomLabelProps extends UseTreeItemLabelSlotOwnProps {
     status: UseTreeItemStatus;
     onClick: React.MouseEventHandler<HTMLElement>;
@@ -478,15 +540,44 @@ const Sidebar: React.FC<SidebarProps> = ({
         </div>
 
         <div className="space-y-1 pb-4 ">
-          <RichTreeView
-            items={treefolders()}
-            slots={{ item: CustomTreeItem }}
-            expansionTrigger="iconContainer"
-            expandedItems={Array.from(expandedIds)}
-            onItemExpansionToggle={handleItemExpansionToggle}
-            isItemEditable
-            onItemLabelChange={(itemId, label) => onRenameFolder(itemId, label)}
-          />
+          <div className="flex gap-1 px-1 mb-2">
+            <button
+              onClick={() => {
+                setViewMode("logical");
+                onViewModeChange?.("logical");
+              }}
+              className={`flex-1 text-xs py-1 rounded ${viewMode === "logical" ? "bg-blue-600 text-white" : "bg-vault-800 text-slate-400"}`}
+            >
+              Logical
+            </button>
+            <button
+              onClick={() => {
+                setViewMode("file");
+                onViewModeChange?.("file");
+              }}
+              className={`flex-1 text-xs py-1 rounded ${viewMode === "file" ? "bg-blue-600 text-white" : "bg-vault-800 text-slate-400"}`}
+            >
+              File
+            </button>
+          </div>
+          {viewMode === "logical" ? (
+            <RichTreeView
+              items={treefolders()}
+              slots={{ item: CustomTreeItem }}
+              expansionTrigger="iconContainer"
+              expandedItems={Array.from(expandedIds)}
+              onItemExpansionToggle={handleItemExpansionToggle}
+              isItemEditable
+              onItemLabelChange={(itemId, label) => onRenameFolder(itemId, label)}
+            />
+          ) : (
+            <RichTreeView
+              items={fileTree}
+              onSelectedItemsChange={(_e, itemId) => {
+                if (itemId) onSelectFolder(itemId as string);
+              }}
+            />
+          )}
         </div>
       </nav>
 
