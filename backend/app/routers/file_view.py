@@ -99,6 +99,11 @@ def delete_folder(body: FolderDeleteRequest):
             detail="Refusing to delete a watched folder's root. Remove it from Watch Folders first if you really want to delete it.",
         )
 
+    try:
+        resolve_storage_mode_for_path(target)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
     affected = find_affected_models(str(target))
     conn = get_db_conn()
     deleted = 0

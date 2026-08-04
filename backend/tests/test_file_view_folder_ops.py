@@ -352,6 +352,25 @@ def test_delete_nonexistent_folder_404s(client, tmp_path):
     assert resp.status_code == 404
 
 
+def test_delete_folder_refuses_path_outside_managed_library_and_watch_roots(client, tmp_path):
+    """A directory that lives neither under UPLOAD_DIR nor under any configured
+    watch_folders.path is not a File-view node at all -- delete_folder must reject
+    it with a clean 4xx via resolve_storage_mode_for_path's containment check,
+    the same guard rename/move already apply, rather than recursively rmtree
+    an arbitrary directory anywhere on the filesystem.
+    """
+    outside_dir = tmp_path / "unrelated"
+    outside_dir.mkdir()
+    survivor = outside_dir / "keep.txt"
+    survivor.write_text("do not delete me")
+
+    resp = client.request("DELETE", "/api/file-view/folder", json={"path": str(outside_dir)})
+    assert resp.status_code == 400
+    assert outside_dir.exists()
+    assert survivor.exists()
+    assert survivor.read_text() == "do not delete me"
+
+
 def test_move_folder_into_own_subtree_rejected(client, tmp_path):
     """Moving "Tanks" to a targetPath nested inside "Tanks" itself
     (e.g. UPLOAD_DIR/Tanks/Sub/Tanks) must be rejected before
