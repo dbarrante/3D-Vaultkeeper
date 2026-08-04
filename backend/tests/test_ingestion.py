@@ -134,7 +134,7 @@ def test_ingest_file_default_copy_mode_unaffected(client, tmp_path):
 
 def test_ingest_file_with_dest_subpath_places_file_in_subdirectory(client, tmp_path):
     from app.services.ingestion import ingest_file
-    from app.db import UPLOAD_DIR
+    from app.db import UPLOAD_DIR, get_db_conn
 
     source = tmp_path / "hull.stl"
     source.write_bytes(b"solid hull endsolid")
@@ -153,10 +153,16 @@ def test_ingest_file_with_dest_subpath_places_file_in_subdirectory(client, tmp_p
     assert model["filePath"] == os.path.join(str(expected_dir), f"{model['id']}.stl")
     assert not source.exists()  # move=True
 
+    # Verify filePath is persisted to the database
+    conn = get_db_conn()
+    row = conn.execute("SELECT filePath FROM models WHERE id=?", (model["id"],)).fetchone()
+    conn.close()
+    assert row["filePath"] == os.path.join(str(expected_dir), f"{model['id']}.stl")
+
 
 def test_ingest_file_without_dest_subpath_stays_flat(client, tmp_path):
     from app.services.ingestion import ingest_file
-    from app.db import UPLOAD_DIR
+    from app.db import UPLOAD_DIR, get_db_conn
 
     source = tmp_path / "flat.stl"
     source.write_bytes(b"solid flat endsolid")
@@ -166,9 +172,16 @@ def test_ingest_file_without_dest_subpath_stays_flat(client, tmp_path):
     assert os.path.exists(os.path.join(UPLOAD_DIR, f"{model['id']}.stl"))
     assert model["filePath"] == os.path.join(str(UPLOAD_DIR), f"{model['id']}.stl")
 
+    # Verify filePath is persisted to the database
+    conn = get_db_conn()
+    row = conn.execute("SELECT filePath FROM models WHERE id=?", (model["id"],)).fetchone()
+    conn.close()
+    assert row["filePath"] == os.path.join(str(UPLOAD_DIR), f"{model['id']}.stl")
+
 
 def test_ingest_file_reference_only_sets_file_path_to_source(client, tmp_path):
     from app.services.ingestion import ingest_file
+    from app.db import get_db_conn
 
     source = tmp_path / "linked.stl"
     source.write_bytes(b"solid linked endsolid")
@@ -178,3 +191,9 @@ def test_ingest_file_reference_only_sets_file_path_to_source(client, tmp_path):
     )
 
     assert model["filePath"] == str(source)
+
+    # Verify filePath is persisted to the database
+    conn = get_db_conn()
+    row = conn.execute("SELECT filePath FROM models WHERE id=?", (model["id"],)).fetchone()
+    conn.close()
+    assert row["filePath"] == str(source)
