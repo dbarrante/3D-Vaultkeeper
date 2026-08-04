@@ -1,4 +1,5 @@
 import React, { useRef, useState, useMemo, useEffect } from "react";
+import { VirtuosoGrid } from "react-virtuoso";
 import {
   CloudUpload,
   FileBox,
@@ -103,6 +104,15 @@ const ModelList: React.FC<ModelListProps> = ({
 }) => {
   const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  // VirtuosoGrid virtualizes the file grid within this component's own
+  // scroll container (rather than owning its own), since the header/search
+  // bar and folder tiles share the same scrolling region above it. A state
+  // setter (not a plain ref) is required here -- customScrollParent needs
+  // the actual DOM node, and a plain ref's first assignment doesn't trigger
+  // the re-render VirtuosoGrid needs to pick it up.
+  const [scrollParent, setScrollParent] = useState<HTMLDivElement | null>(
+    null,
+  );
   const [searchQuery, setSearchQuery] = useState("");
   const [sortBy, setSortBy] = useState<SortOption>("date-desc");
   const [activeMenuModelId, setActiveMenuModelId] = useState<string | null>(
@@ -305,7 +315,10 @@ const ModelList: React.FC<ModelListProps> = ({
   const selectionMode = selectedIds.size > 0;
 
   return (
-    <div className="flex-1 p-2 sm:p-4 h-full overflow-y-auto relative flex flex-col">
+    <div
+      ref={setScrollParent}
+      className="flex-1 p-2 sm:p-4 h-full overflow-y-auto relative flex flex-col"
+    >
       {/* Header Section */}
       <div className="flex flex-col gap-6 mb-4">
         <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4">
@@ -576,7 +589,7 @@ const ModelList: React.FC<ModelListProps> = ({
 
           {/* Files */}
           <div
-            className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-3 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-3 pb-24"
+            className="relative pb-24"
             onDragEnter={handleDragEnter}
             onDragOver={handleDragOver}
             onDragLeave={handleDragLeave}
@@ -597,14 +610,27 @@ const ModelList: React.FC<ModelListProps> = ({
               </div>
             )}
 
-            {/* Render Models */}
-            {processedModels.map((model) => {
-              const isSelected = selectedIds.has(model.id);
-              const isMenuOpen = activeMenuModelId === model.id;
+            {/* Render Models -- virtualized via VirtuosoGrid: only cards
+                near the viewport are ever mounted, no matter how large the
+                library is. Without this, every Card in the whole filtered
+                list mounted as a real DOM node on every App-level render
+                (even ones unrelated to the grid), which measured multiple
+                seconds per interaction on a library of a few thousand
+                models. VirtuosoGrid measures actual rendered item size via
+                ResizeObserver rather than requiring fixed dimensions, so it
+                keeps working with the Tailwind responsive column classes
+                below (listClassName) instead of fighting them. */}
+            <VirtuosoGrid
+              customScrollParent={scrollParent ?? undefined}
+              totalCount={processedModels.length}
+              listClassName="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-3 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-3"
+              itemContent={(index) => {
+                const model = processedModels[index];
+                const isSelected = selectedIds.has(model.id);
+                const isMenuOpen = activeMenuModelId === model.id;
 
-              return (
-                <div
-                  key={model.id}
+                return (
+                  <div
                   draggable={true}
                   onDragStart={(e) => handleCardDragStart(e, model.id)}
                   onClick={() => {
@@ -838,9 +864,10 @@ const ModelList: React.FC<ModelListProps> = ({
                       }}
                     />
                   </div>
-                </div>
-              );
-            })}
+                  </div>
+                );
+              }}
+            />
           </div>
         </div>
       )}
