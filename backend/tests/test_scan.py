@@ -169,3 +169,46 @@ def test_scan_watch_folder_references_instead_of_copying(client, tmp_path):
     assert model["storageMode"] == "reference"
     assert model["sourcePath"] == str(watched_dir / "a.stl")
     assert not any(f.startswith(model["id"]) for f in os.listdir(UPLOAD_DIR))
+
+
+def test_get_or_create_folder_creates_new_folder(client):
+    from app.services.scan import get_or_create_folder
+    from app.db import get_db_conn
+
+    folder_id = get_or_create_folder("PrintA", None)
+
+    conn = get_db_conn()
+    row = conn.execute(
+        "SELECT name, parentId FROM folders WHERE id=?", (folder_id,)
+    ).fetchone()
+    conn.close()
+    assert row["name"] == "PrintA"
+    assert row["parentId"] is None
+
+
+def test_get_or_create_folder_reuses_existing_folder(client):
+    from app.services.scan import get_or_create_folder
+    from app.db import get_db_conn
+
+    first_id = get_or_create_folder("PrintA", "1")
+    second_id = get_or_create_folder("PrintA", "1")
+
+    assert first_id == second_id
+    conn = get_db_conn()
+    count = conn.execute(
+        "SELECT COUNT(*) as c FROM folders WHERE name=? AND parentId=?",
+        ("PrintA", "1"),
+    ).fetchone()["c"]
+    conn.close()
+    assert count == 1
+
+
+def test_get_or_create_folder_distinguishes_by_parent(client):
+    """Same name under a different parent (or no parent) is a different
+    folder — never merged into one."""
+    from app.services.scan import get_or_create_folder
+
+    under_none = get_or_create_folder("PrintA", None)
+    under_1 = get_or_create_folder("PrintA", "1")
+
+    assert under_none != under_1

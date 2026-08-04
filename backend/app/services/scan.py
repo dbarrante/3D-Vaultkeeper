@@ -9,6 +9,33 @@ from app.services.ingestion import ingest_file
 SUPPORTED_EXTENSIONS = {".stl", ".3mf", ".obj", ".step", ".stp"}
 
 
+def get_or_create_folder(name: str, parent_id: Optional[str]) -> str:
+    """Looks up a folder by exact (name, parentId) match before creating
+    one — idempotent so re-scans of the same watched subdirectory, and
+    any manually-created folder that happens to share a name, never
+    produce duplicates. `IS` (not `=`) is required for the parentId
+    comparison: SQLite's `IS` is NULL-safe, matching a bound NULL
+    parameter correctly, where plain `=` never matches NULL at all.
+    """
+    conn = get_db_conn()
+    row = conn.execute(
+        "SELECT id FROM folders WHERE name=? AND parentId IS ?",
+        (name, parent_id),
+    ).fetchone()
+    if row:
+        conn.close()
+        return row["id"]
+
+    folder_id = str(uuid.uuid4())
+    conn.execute(
+        "INSERT INTO folders(id,name,parentId) VALUES (?,?,?)",
+        (folder_id, name, parent_id),
+    )
+    conn.commit()
+    conn.close()
+    return folder_id
+
+
 def is_supported_3d_file(path: Path) -> bool:
     return path.suffix.lower() in SUPPORTED_EXTENSIONS
 
