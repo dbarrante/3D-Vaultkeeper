@@ -26,6 +26,10 @@ def rename_folder(body: FolderRenameRequest):
     destination = source.parent / body.newName
     if destination.exists():
         raise HTTPException(status_code=409, detail=f"A folder already exists at {destination}")
+    source_resolved = source.resolve()
+    destination_resolved = destination.resolve()
+    if destination_resolved == source_resolved or source_resolved in destination_resolved.parents:
+        raise HTTPException(status_code=400, detail="Cannot move a folder into itself or one of its own subfolders.")
     try:
         storage_mode = resolve_storage_mode_for_path(source)
         validate_destination(str(destination), storage_mode)
@@ -49,6 +53,10 @@ def move_folder(body: FolderMoveRequest):
     destination = Path(body.targetPath)
     if destination.exists():
         raise HTTPException(status_code=409, detail=f"A folder already exists at {destination}")
+    source_resolved = source.resolve()
+    destination_resolved = destination.resolve()
+    if destination_resolved == source_resolved or source_resolved in destination_resolved.parents:
+        raise HTTPException(status_code=400, detail="Cannot move a folder into itself or one of its own subfolders.")
     try:
         storage_mode = resolve_storage_mode_for_path(source)
         validate_destination(str(destination), storage_mode)

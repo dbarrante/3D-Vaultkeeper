@@ -218,3 +218,49 @@ def test_move_folder_reference_mode_outside_every_watch_root_rejected(client, tm
     conn.close()
     assert row["filePath"] == str(f1)  # DB not rewritten either
     assert row["sourcePath"] == str(f1)
+
+
+def test_rename_folder_into_own_subfolder_rejected(client, tmp_path):
+    """Renaming "Tanks" with newName="Tanks/Sub" resolves to a destination
+    nested inside the source itself. This passes the 409-exists check
+    (destination doesn't exist yet) and containment validation (still
+    resolves inside UPLOAD_DIR) -- shutil.move would then raise on a
+    self-nested move, and the router must reject this before ever calling
+    it rather than let that surface as an unhandled 500.
+    """
+    upload_dir = Path(os.environ["FILE_STORAGE"])
+    src_dir = upload_dir / "Tanks"
+    src_dir.mkdir()
+    f1 = src_dir / "hull.stl"
+    f1.write_text("data")
+
+    resp = client.post(
+        "/api/file-view/folder/rename",
+        json={"path": str(src_dir), "newName": "Tanks/Sub"},
+    )
+    assert resp.status_code == 400
+    assert src_dir.exists()  # untouched
+    assert f1.exists()
+    assert sorted(p.name for p in src_dir.iterdir()) == ["hull.stl"]  # no stray "Sub" dir
+
+
+def test_move_folder_into_own_subtree_rejected(client, tmp_path):
+    """Moving "Tanks" to a targetPath nested inside "Tanks" itself
+    (e.g. UPLOAD_DIR/Tanks/Sub/Tanks) must be rejected before
+    destination.parent.mkdir(parents=True, exist_ok=True) runs -- otherwise
+    that call creates the intermediate "Sub" directory *inside the still
+    -present source* right before shutil.move blows up, leaving a stray
+    directory behind even though the whole operation ultimately failed.
+    """
+    upload_dir = Path(os.environ["FILE_STORAGE"])
+    src_dir = upload_dir / "Tanks"
+    src_dir.mkdir()
+    f1 = src_dir / "hull.stl"
+    f1.write_text("data")
+
+    target = str(src_dir / "Sub" / "Tanks")
+    resp = client.post("/api/file-view/folder/move", json={"sourcePath": str(src_dir), "targetPath": target})
+    assert resp.status_code == 400
+    assert src_dir.exists()  # untouched
+    assert f1.exists()
+    assert sorted(p.name for p in src_dir.iterdir()) == ["hull.stl"]  # no stray "Sub" dir created
