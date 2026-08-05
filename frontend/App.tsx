@@ -608,13 +608,13 @@ const App = () => {
 
   const handleImportSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!importUrl || !importFolderId) return;
+    if (!importUrl) return;
 
     try {
       const result = await api.retrieveModelOptions(importUrl);
       const NewSet = new Set("");
       result.files.forEach((m) => {
-        if (m.folder && !NewSet.has(m.folder)) {
+        if (!NewSet.has(m.folder)) {
           NewSet.add(m.folder);
         }
       });
@@ -677,9 +677,13 @@ const App = () => {
         folderResolution: resolution,
       });
       setModels((prev) => [...result.models, ...prev]);
-      setFolders((prev) => [...prev, result.folder]);
+      setFolders((prev) =>
+        prev.some((f) => f.id === result.folder.id)
+          ? prev.map((f) => (f.id === result.folder.id ? result.folder : f))
+          : [...prev, result.folder],
+      );
       result.models.forEach((m) => {
-        handleUpdateSTEPThumbnail(m);
+        handleUpdateSTEPThumbnail(m).catch(() => {});
       });
       setImportCollision(null);
       if (result.failed.length > 0) {
@@ -1357,7 +1361,7 @@ const App = () => {
                         </button>
                         <button
                           type="submit"
-                          disabled={!importUrl || !importFolderId}
+                          disabled={!importUrl}
                           className="flex-1 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                           Import
