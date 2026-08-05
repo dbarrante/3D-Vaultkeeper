@@ -151,17 +151,9 @@ const App = () => {
         if (queue.length > 0 && !cancelled) {
           const model = queue[0];
           const fileUrl = resolveApiOrigin() + model.url;
+          let thumbnail: string | null = null;
           try {
-            const thumbnail = await generateThumbnailFromUrl(
-              fileUrl,
-              model.name,
-            );
-            if (!cancelled) {
-              setModels((prev) =>
-                prev.map((m) => (m.id === model.id ? { ...m, thumbnail } : m)),
-              );
-              await api.updateModel(model.id, { thumbnail });
-            }
+            thumbnail = await generateThumbnailFromUrl(fileUrl, model.name);
           } catch (renderErr) {
             console.error(
               `Thumbnail generation failed for model ${model.id}:`,
@@ -176,6 +168,27 @@ const App = () => {
               await api
                 .updateModel(model.id, { thumbnailFailed: true })
                 .catch(() => {});
+            }
+          }
+          if (thumbnail && !cancelled) {
+            try {
+              await api.updateModel(model.id, { thumbnail });
+              setModels((prev) =>
+                prev.map((m) =>
+                  m.id === model.id ? { ...m, thumbnail } : m,
+                ),
+              );
+            } catch (saveErr) {
+              console.error(
+                `Failed to save generated thumbnail for model ${model.id}:`,
+                saveErr,
+              );
+              // Deliberately NOT marking thumbnailFailed here -- the render
+              // itself succeeded, only persisting it failed. Leaving
+              // thumbnail NULL means this model naturally comes back up in
+              // the queue on a later tick instead of being permanently
+              // quarantined for a transient save-layer problem unrelated to
+              // whether the model can actually be rendered.
             }
           }
         }
