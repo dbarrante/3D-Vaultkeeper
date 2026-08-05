@@ -26,32 +26,38 @@ function disposeObject3D(object: THREE.Object3D) {
   });
 }
 
-// Camera/light setup below is copied to match thumbnailGenerator.ts's
-// internal `renderObjectToDataUrl` helper (Task 2's shared scene-building
-// core for the static thumbnails) as closely as a continuously-rendering
-// live scene allows, so the hover preview reads as "the same object, now
-// spinning" rather than a subtly different render:
+// Lighting is copied from thumbnailGenerator.ts's internal
+// `renderObjectToDataUrl` helper (Task 2's shared scene-building core for
+// the static thumbnails), so the hover preview reads as "the same object,
+// now spinning" rather than a subtly different render. Camera framing is
+// deliberately tighter than the static thumbnail's, since this preview has
+// its own dedicated on-screen area to fill rather than a fixed 300x300
+// offscreen square:
 //   - PerspectiveCamera(45, <aspect>, 0.1, 10000) -- aspect is computed from
-//     the actual card element instead of thumbnailGenerator.ts's hardcoded 1,
-//     since that value assumes a fixed 300x300 offscreen canvas and this
-//     mounts into a non-square card region; a hardcoded 1 here would
-//     visibly stretch the model.
+//     the actual card element (a non-square region), unlike
+//     thumbnailGenerator.ts's hardcoded 1.
 //   - camera.up.set(0.0, -1.0, 0.0)
-//   - cameraZ = |maxDim / 2 / tan(fov/2)| * 3.5 -- the *real* settled
-//     zoom-out multiplier per Task 2's report (it reconciled a genuine 3.5
-//     vs 2.5 discrepancy between the old STL/3MF and STEP branches and kept
-//     3.5 for every format), not the brief's illustrative 2.5.
-//   - Unlike thumbnailGenerator.ts (a one-shot snapshot with no rotation
-//     animation to worry about), this component DOES recenter the object
-//     via `object.position.sub(center)`, then positions the camera at
-//     (0, 0, cameraZ) looking at the origin instead of at `center`. This is
-//     a pure coordinate-origin shift -- cameraZ and every relative distance
-//     stay identical, so the framing still matches the static thumbnail --
-//     but it's required for the per-frame rotation below to spin the object
-//     around its own visual center rather than around whatever arbitrary
-//     point the source file's modeling origin happened to sit at (many real
-//     STL exports are not centered on their own geometry, which made the
-//     object visibly orbit/swing instead of spinning in place).
+//   - The object is recentered inside a wrapping pivot Group
+//     (`object.position.sub(center)`, `pivot.add(object)`) so the per-frame
+//     rotation below spins it around its own visual center rather than
+//     around whatever arbitrary point the source file's modeling origin
+//     happened to sit at (many real STL exports are not centered on their
+//     own geometry, which made the object visibly orbit/swing instead of
+//     spinning in place). The object's OWN rotation is frozen at its
+//     initial per-format value once this is set up; only `pivot.rotation.y`
+//     is animated -- rotating `object` directly here would make the fixed
+//     recentering translation only valid at the one angle it was measured
+//     for, causing the object to drift away from center as the animation
+//     progresses.
+//   - cameraZ is solved from the object's bounding SPHERE radius (not the
+//     AABB's maxDim) so the object can never clip out of frame at any
+//     rotation angle, with only a small 1.15x padding multiplier -- unlike
+//     the static thumbnail's much larger 3.5x zoom-out (appropriate there
+//     since it frames one fixed, already-final orientation with no
+//     animation to protect against, and traditionally leaves more visual
+//     breathing room for a small grid thumbnail). Camera and lights are
+//     positioned/aimed at the world origin, since the pivot (and the
+//     recentered object inside it) sits there.
 //   - AmbientLight(0xffffff, 0.7); key DirectionalLight(0xffffff, 1.0) at
 //     the camera position looking at the origin; back DirectionalLight
 //     (0xffffff, 0.5) at (-5, -5, -10).
@@ -187,9 +193,24 @@ const HoverPreviewCanvas: React.FC<{
         10000,
       );
       camera.up.set(0.0, -1.0, 0.0);
+      // Unlike the static thumbnail (thumbnailGenerator.ts, which frames a
+      // single fixed orientation and uses a generous 3.5x zoom-out multiplier
+      // for padding), this preview keeps rotating -- framing it that loosely
+      // leaves most of the dedicated hover-preview area empty. Instead:
+      // 1. Use the object's bounding SPHERE radius (not the AABB's maxDim)
+      //    as the size measure. A sphere fully containing the box is
+      //    rotation-invariant, so the object can never clip out of frame at
+      //    ANY rotation angle -- maxDim alone only guarantees a fit at the
+      //    rotation angle it was measured at.
+      // 2. Solve the camera distance exactly for that sphere to fill the
+      //    vertical FOV (D = R / sin(fov/2), the precise sphere-fills-frame
+      //    distance), then apply only a small 1.15x padding multiplier
+      //    instead of 3.5x, so the object fills most of the available space
+      //    while still leaving a small margin.
+      const sphere = box.getBoundingSphere(new THREE.Sphere());
       const fov = camera.fov * (Math.PI / 180);
-      let cameraZ = Math.abs(maxDim / 2 / Math.tan(fov / 2));
-      cameraZ *= 3.5; // Zoom out slightly for padding -- matches thumbnailGenerator.ts
+      let cameraZ = sphere.radius / Math.sin(fov / 2);
+      cameraZ *= 1.15; // small padding so the object doesn't touch the frame edge
       camera.position.set(0, 0, cameraZ);
       camera.lookAt(0, 0, 0);
 
