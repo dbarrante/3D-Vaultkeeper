@@ -223,17 +223,28 @@ def create_folder(body: FolderCreateRequest):
     except FileExistsError:
         raise HTTPException(status_code=409, detail=f"A folder already exists at {new_dir}")
 
+    # Normalized before it's ever stored or returned so this row's path always
+    # matches the form find_affected_tracked_folders/rewrite_tracked_folder_paths
+    # compare against (they key DELETE/UPDATE on the exact, normalized string,
+    # not the row id). A parentPath containing an uncollapsed ".." segment that
+    # still resolves inside an allowed root would otherwise get stored verbatim
+    # here, and then never match on a later rename/move/delete -- silently
+    # orphaning the row from all future sync. Physical directory creation above
+    # is untouched: normalizing the string doesn't change where mkdir() already
+    # created the directory on disk.
+    normalized_new_dir = os.path.normpath(str(new_dir))
+
     conn = get_db_conn()
     try:
         conn.execute(
             "INSERT OR REPLACE INTO file_view_tracked_folders(path) VALUES (?)",
-            (str(new_dir),),
+            (normalized_new_dir,),
         )
         conn.commit()
     finally:
         conn.close()
 
-    return {"path": str(new_dir)}
+    return {"path": normalized_new_dir}
 
 
 @router.get("/tracked-folders")

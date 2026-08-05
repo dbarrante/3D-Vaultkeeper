@@ -959,3 +959,54 @@ def test_rename_tracked_folder_itself_updates_its_own_row(client, tmp_path):
     assert old_row is None
     assert new_row is not None
     assert Path(new_expected).is_dir()
+
+
+def test_create_folder_normalizes_parent_path_with_dotdot_segment(client, tmp_path):
+    """A parentPath containing an uncollapsed '..' segment that still resolves
+    inside UPLOAD_DIR (e.g. UPLOAD_DIR/Sub/..) must be normalized before the
+    tracked-folder row is stored and returned. Without normalization,
+    find_affected_tracked_folders' os.path.normpath(row["path"]) comparison
+    would never match the un-collapsed stored value, silently orphaning the
+    row from every future rename/move/delete sync -- exactly the bug this
+    task exists to prevent. Also proves the desync is impossible end-to-end
+    by renaming an ancestor afterward and confirming the row actually moves.
+    """
+    from app.db import get_db_conn
+    upload_dir = Path(os.environ["FILE_STORAGE"])
+    (upload_dir / "Sub").mkdir()
+    dotdot_parent = str(upload_dir / "Sub" / "..")
+
+    resp = client.post("/api/file-view/folder", json={"parentPath": dotdot_parent, "name": "Tanks"})
+    assert resp.status_code == 200
+    returned_path = resp.json()["path"]
+    assert ".." not in Path(returned_path).parts, "returned path must already be normalized"
+    expected = str(upload_dir / "Tanks")
+    assert returned_path == expected
+
+    conn = get_db_conn()
+    row = conn.execute(
+        "SELECT path FROM file_view_tracked_folders WHERE path=?", (expected,)
+    ).fetchone()
+    conn.close()
+    assert row is not None, "row must be stored in normalized form"
+
+    # Close the loop empirically: rename an ancestor and confirm the tracked
+    # row's path actually gets updated by find_affected_tracked_folders /
+    # rewrite_tracked_folder_paths -- proving the desync is now impossible,
+    # not just that the initial INSERT looks right.
+    resp = client.post(
+        "/api/file-view/folder/rename", json={"path": expected, "newName": "Armor"}
+    )
+    assert resp.status_code == 200
+
+    conn = get_db_conn()
+    old_row = conn.execute(
+        "SELECT path FROM file_view_tracked_folders WHERE path=?", (expected,)
+    ).fetchone()
+    new_row = conn.execute(
+        "SELECT path FROM file_view_tracked_folders WHERE path=?",
+        (str(upload_dir / "Armor"),),
+    ).fetchone()
+    conn.close()
+    assert old_row is None
+    assert new_row is not None
