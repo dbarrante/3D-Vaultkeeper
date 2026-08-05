@@ -191,6 +191,13 @@ export const api = {
     return res.json();
   },
 
+  // 7b. GET thumbnail-less models eligible for background thumbnail generation
+  getThumbnailQueue: async (limit: number = 1): Promise<STLModel[]> => {
+    const res = await fetch(`${getApiBaseUrl()}/models/thumbnail-queue?limit=${limit}`);
+    if (!res.ok) throw new Error("Failed to fetch thumbnail queue");
+    return res.json();
+  },
+
   // 8. DELETE Model
   deleteModel: async (id: string, deleteFile: boolean = false): Promise<void> => {
     console.log("API: Deleting model", id, "deleteFile:", deleteFile);

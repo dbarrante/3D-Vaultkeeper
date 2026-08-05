@@ -13,7 +13,10 @@ import {
   FILE_VIEW_UPLOADS_BUCKET_ID,
   fileViewSegments,
 } from "./types";
-import { generateThumbnail } from "./services/thumbnailGenerator";
+import {
+  generateThumbnail,
+  generateThumbnailFromUrl,
+} from "./services/thumbnailGenerator";
 import { api, resolveApiOrigin } from "./services/api";
 import {
   FolderInput,
@@ -125,6 +128,72 @@ const App = () => {
   useEffect(() => {
     fetchData();
   }, [fetchData]);
+
+  // Background thumbnail generation loop. Runs for the whole app session
+  // (mounted here at the root, not inside any specific view) so models that
+  // never got a thumbnail at ingest time -- watch-folder scans and Import
+  // Wizard commits both skip thumbnailing on purpose -- eventually gain one
+  // without any user action, and so does any pre-existing thumbnail-less
+  // backlog. A self-rescheduling setTimeout chain is used instead of
+  // setInterval: it guarantees the next tick never starts until the current
+  // render+save has fully finished, so a slow STEP render can never overlap
+  // with the next queue fetch. The `cancelled` flag mirrors this app's
+  // existing cleanup-safe async effect pattern. The 3-second gap between
+  // ticks keeps this a slow background trickle, never a tight loop that
+  // could make the UI feel sluggish.
+  useEffect(() => {
+    let cancelled = false;
+
+    async function tick() {
+      if (cancelled) return;
+      try {
+        const queue = await api.getThumbnailQueue(1);
+        if (queue.length > 0 && !cancelled) {
+          const model = queue[0];
+          const fileUrl = resolveApiOrigin() + model.url;
+          try {
+            const thumbnail = await generateThumbnailFromUrl(
+              fileUrl,
+              model.name,
+            );
+            if (!cancelled) {
+              setModels((prev) =>
+                prev.map((m) => (m.id === model.id ? { ...m, thumbnail } : m)),
+              );
+              await api.updateModel(model.id, { thumbnail });
+            }
+          } catch (renderErr) {
+            console.error(
+              `Thumbnail generation failed for model ${model.id}:`,
+              renderErr,
+            );
+            if (!cancelled) {
+              setModels((prev) =>
+                prev.map((m) =>
+                  m.id === model.id ? { ...m, thumbnailFailed: true } : m,
+                ),
+              );
+              await api
+                .updateModel(model.id, { thumbnailFailed: true })
+                .catch(() => {});
+            }
+          }
+        }
+      } catch (queueErr) {
+        console.error("Thumbnail queue fetch failed:", queueErr);
+      }
+      if (!cancelled) {
+        setTimeout(tick, 3000);
+      }
+    }
+
+    const startTimer = setTimeout(tick, 3000);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(startTimer);
+    };
+  }, []);
 
   // Settings (WatcherInbox's "Add Watched Folder" / "+ New folder...") is
   // where watch folders and their target library folders get created —
