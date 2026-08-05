@@ -104,7 +104,10 @@ const App = () => {
           api.getFolders(),
           api.getModels("all"),
           api.getStorageStats(),
-          api.getFileViewTrackedFolders().catch(() => [] as string[]),
+          api.getFileViewTrackedFolders().catch((err) => {
+            console.warn("Failed to fetch tracked File-view folders:", err);
+            return [] as string[];
+          }),
         ],
       );
       setFolders(fetchedFolders);

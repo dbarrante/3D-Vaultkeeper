@@ -354,10 +354,20 @@ const Sidebar: React.FC<SidebarProps> = ({
     // that already has models under it is a no-op here: childMap already
     // has every node on its chain from the walk above.
     trackedFolderPaths.forEach((trackedPath) => {
-      const meaningfulSegments = fileViewFolderSegments(trackedPath);
-      if (meaningfulSegments.length === 0) return;
-
       const rawSegments = trackedPath.replace(/\\/g, "/").split("/").filter((s) => s.length > 0);
+      // Unlike the model walk above, there's no synthetic Uploads bucket to
+      // fall back into here -- that bucket specifically represents flat
+      // pre-feature copy-mode storage under UPLOAD_DIR, and a tracked folder
+      // reaching this branch is, in every real case, a folder literally named
+      // "Uploads"/"uploads"/etc. created under a WATCH root (create_folder
+      // already refuses to produce the degenerate case under UPLOAD_DIR
+      // itself). Routing it into the bucket would mislabel it as flat
+      // copy-mode storage it isn't, so instead fall back to the raw,
+      // uncollapsed path segments -- the folder still gets a real tree node
+      // at its actual real location instead of silently vanishing.
+      let meaningfulSegments = fileViewFolderSegments(trackedPath);
+      if (meaningfulSegments.length === 0) meaningfulSegments = rawSegments;
+
       const dropped = rawSegments.length - meaningfulSegments.length;
 
       let cursor = root;

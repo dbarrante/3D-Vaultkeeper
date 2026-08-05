@@ -209,7 +209,7 @@ def create_folder(body: FolderCreateRequest):
         raise HTTPException(status_code=404, detail=f"Parent folder not found: {parent_path}")
 
     try:
-        resolve_storage_mode_for_path(parent)
+        storage_mode = resolve_storage_mode_for_path(parent)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
@@ -217,6 +217,19 @@ def create_folder(body: FolderCreateRequest):
     new_dir = parent / sanitized_name
     if new_dir.exists():
         raise HTTPException(status_code=409, detail=f"A folder already exists at {new_dir}")
+
+    # Belt-and-suspenders with rename_folder/move_folder, which both
+    # re-validate their actual destination rather than trusting the parent's
+    # containment alone. Not currently reachable any other way here --
+    # sanitize_path_segment already strips "/", "\\", ":" and leading/trailing
+    # dots/spaces from body.name, so new_dir can only ever be a direct child of
+    # an already-validated parent -- but keeping this check means a future
+    # change to sanitize_path_segment or parent resolution can't silently
+    # reopen an escape here without also tripping this guard.
+    try:
+        validate_destination(str(new_dir), storage_mode)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
     try:
         new_dir.mkdir()
