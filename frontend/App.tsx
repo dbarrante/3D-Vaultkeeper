@@ -5,6 +5,7 @@ import DetailPanel from "./components/DetailPanel";
 import Settings from "./components/Settings";
 import Navbar from "./components/Navbar";
 import ManualModal from "./components/ManualModal";
+import ThumbnailProgressBar from "./components/ThumbnailProgressBar";
 import {
   STLModel,
   Folder,
@@ -53,6 +54,9 @@ const App = () => {
     total: 0,
   });
   const [trackedFolderPaths, setTrackedFolderPaths] = useState<string[]>([]);
+  const [thumbnailInProgressName, setThumbnailInProgressName] = useState<
+    string | null
+  >(null);
 
   const [currentFolderId, setCurrentFolderId] = useState<string>("all");
   const [viewMode, setViewMode] = useState<"logical" | "file">("logical");
@@ -153,6 +157,7 @@ const App = () => {
           const model = queue[0];
           const fileUrl = resolveApiOrigin() + model.url;
           let thumbnail: string | null = null;
+          if (!cancelled) setThumbnailInProgressName(model.name);
           try {
             thumbnail = await generateThumbnailFromUrl(fileUrl, model.name);
           } catch (renderErr) {
@@ -211,6 +216,7 @@ const App = () => {
         console.error("Thumbnail queue fetch failed:", queueErr);
       }
       if (!cancelled) {
+        setThumbnailInProgressName(null);
         setTimeout(tick, 3000);
       }
     }
@@ -222,6 +228,45 @@ const App = () => {
       clearTimeout(startTimer);
     };
   }, []);
+
+  // Derived progress for the bottom status bar above: eligible models are
+  // the same STL/3MF/STEP-only, non-permanently-failed set the loop above
+  // and the backend's thumbnail-queue endpoint both use, so "complete vs
+  // left to populate" always matches what the loop is actually working
+  // through. Reuses the already-loaded `models` state -- no extra request.
+  const thumbnailStats = useMemo(() => {
+    const eligible = models.filter((m) => {
+      if (m.thumbnailFailed) return false;
+      const lower = m.name.toLowerCase();
+      return (
+        lower.endsWith(".stl") ||
+        lower.endsWith(".3mf") ||
+        lower.endsWith(".step") ||
+        lower.endsWith(".stp")
+      );
+    });
+    return {
+      completed: eligible.filter((m) => m.thumbnail).length,
+      total: eligible.length,
+    };
+  }, [models]);
+
+  // Briefly shows the "All N generated" done state when the remaining
+  // count drops to zero, then auto-hides -- matches the approved mockup's
+  // Option A behavior rather than the bar just vanishing mid-transition.
+  const [showThumbnailDoneBanner, setShowThumbnailDoneBanner] =
+    useState(false);
+  const prevThumbnailRemainingRef = useRef<number | null>(null);
+  useEffect(() => {
+    const remaining = thumbnailStats.total - thumbnailStats.completed;
+    const prevRemaining = prevThumbnailRemainingRef.current;
+    prevThumbnailRemainingRef.current = remaining;
+    if (prevRemaining !== null && prevRemaining > 0 && remaining === 0) {
+      setShowThumbnailDoneBanner(true);
+      const t = setTimeout(() => setShowThumbnailDoneBanner(false), 2500);
+      return () => clearTimeout(t);
+    }
+  }, [thumbnailStats.completed, thumbnailStats.total]);
 
   // Settings (WatcherInbox's "Add Watched Folder" / "+ New folder...") is
   // where watch folders and their target library folders get created —
@@ -1632,6 +1677,12 @@ const App = () => {
             API Host Not Set
           </Alert>
         </Snackbar>
+        <ThumbnailProgressBar
+          completed={thumbnailStats.completed}
+          total={thumbnailStats.total}
+          currentName={thumbnailInProgressName}
+          justFinished={showThumbnailDoneBanner}
+        />
       </div>
     </ThemeProvider>
   );

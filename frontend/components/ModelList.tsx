@@ -761,10 +761,22 @@ const ModelList: React.FC<ModelListProps> = ({
                           image={model.thumbnail}
                         />
                       ) : (
-                        <>
+                        // Fixed h-60 here matches CardMedia's h-60 above --
+                        // without it, a card with no thumbnail is only as
+                        // tall as this small icon, and jumps to the much
+                        // taller image height the instant the background
+                        // thumbnail-generation loop (App.tsx) gives it a
+                        // real thumbnail. VirtuosoGrid measures actual
+                        // rendered item height via ResizeObserver, so that
+                        // per-card height jump forces it to re-measure and
+                        // re-flow the whole virtualized grid -- visible as
+                        // jumping across the list even when the user isn't
+                        // scrolling, since it's driven by the background
+                        // loop's own timer, not user input.
+                        <div className="h-60 relative flex items-center justify-center">
                           <div className="absolute inset-0 opacity-30 group-hover:opacity-50 transition-opacity bg-gradient-to-tr from-blue-900/40 to-transparent" />
                           <FileBox className="w-12 h-12 text-slate-600 group-hover:text-blue-400 transition-colors" />
-                        </>
+                        </div>
                       )}
                       <div className="absolute bottom-[5.2rem] left-2 flex gap-1 max-w-[80%]">
                         {model.tags.slice(0, 2).map((tag) => (
