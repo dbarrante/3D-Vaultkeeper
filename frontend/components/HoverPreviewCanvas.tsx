@@ -41,14 +41,20 @@ function disposeObject3D(object: THREE.Object3D) {
 //     zoom-out multiplier per Task 2's report (it reconciled a genuine 3.5
 //     vs 2.5 discrepancy between the old STL/3MF and STEP branches and kept
 //     3.5 for every format), not the brief's illustrative 2.5.
-//   - camera positioned at (center.x, center.y, cameraZ) looking at center
-//     -- note the object itself is intentionally *not* recentered to the
-//     origin (thumbnailGenerator.ts never does `object.position.sub(center)`
-//     either); recentering here would frame the model differently than the
-//     static thumbnails do.
+//   - Unlike thumbnailGenerator.ts (a one-shot snapshot with no rotation
+//     animation to worry about), this component DOES recenter the object
+//     via `object.position.sub(center)`, then positions the camera at
+//     (0, 0, cameraZ) looking at the origin instead of at `center`. This is
+//     a pure coordinate-origin shift -- cameraZ and every relative distance
+//     stay identical, so the framing still matches the static thumbnail --
+//     but it's required for the per-frame rotation below to spin the object
+//     around its own visual center rather than around whatever arbitrary
+//     point the source file's modeling origin happened to sit at (many real
+//     STL exports are not centered on their own geometry, which made the
+//     object visibly orbit/swing instead of spinning in place).
 //   - AmbientLight(0xffffff, 0.7); key DirectionalLight(0xffffff, 1.0) at
-//     the camera position looking at center; back DirectionalLight(0xffffff,
-//     0.5) at (-5, -5, -10).
+//     the camera position looking at the origin; back DirectionalLight
+//     (0xffffff, 0.5) at (-5, -5, -10).
 const HoverPreviewCanvas: React.FC<{
   model: STLModel;
   onError: () => void;
@@ -142,9 +148,33 @@ const HoverPreviewCanvas: React.FC<{
         return;
       }
 
-      const scene = new THREE.Scene();
-      scene.add(object);
       const center = box.getCenter(new THREE.Vector3());
+      // Recenter `object` within a wrapping pivot Group so it spins around
+      // its own visual center instead of whatever arbitrary point the
+      // source file's modeling origin happened to be at (real STL exports
+      // are frequently not centered on their own geometry -- e.g.
+      // positioned relative to a print-bed corner -- which made the object
+      // visibly orbit/swing instead of spinning in place).
+      //
+      // This MUST be a separate pivot, not a fixed `object.position.sub
+      // (center)` shift with `object.rotation.y` animated directly: `center`
+      // is only valid for the rotation `object` had at the instant it was
+      // measured (the fixed per-format initial rotation applied above, e.g.
+      // 0.3 for STL). If `object`'s own rotation kept advancing every frame,
+      // the fixed translation would only cancel the rotation correctly at
+      // that one starting angle -- at every other angle the object visibly
+      // drifts away from center, growing worse as the animation progresses
+      // (confirmed empirically: the object visibly shrank into the distance
+      // over a few seconds before this fix). Freezing `object`'s own
+      // rotation at its initial value, recentering `object` inside `pivot`,
+      // and animating `pivot.rotation.y` instead keeps the object's visual
+      // center pinned to the pivot's own origin at every rotation angle.
+      object.position.sub(center);
+      const pivot = new THREE.Group();
+      pivot.add(object);
+
+      const scene = new THREE.Scene();
+      scene.add(pivot);
 
       const el = mountRef.current;
       const width = el.clientWidth || 1;
@@ -160,8 +190,8 @@ const HoverPreviewCanvas: React.FC<{
       const fov = camera.fov * (Math.PI / 180);
       let cameraZ = Math.abs(maxDim / 2 / Math.tan(fov / 2));
       cameraZ *= 3.5; // Zoom out slightly for padding -- matches thumbnailGenerator.ts
-      camera.position.set(center.x, center.y, cameraZ);
-      camera.lookAt(center);
+      camera.position.set(0, 0, cameraZ);
+      camera.lookAt(0, 0, 0);
 
       scene.add(new THREE.AmbientLight(0xffffff, 0.7));
       const keyLight = new THREE.DirectionalLight(0xffffff, 1.0);
@@ -170,7 +200,7 @@ const HoverPreviewCanvas: React.FC<{
         camera.position.y,
         camera.position.z,
       );
-      keyLight.lookAt(center);
+      keyLight.lookAt(0, 0, 0);
       scene.add(keyLight);
 
       const backLight = new THREE.DirectionalLight(0xffffff, 0.5);
@@ -208,7 +238,7 @@ const HoverPreviewCanvas: React.FC<{
 
       function animate() {
         if (disposed || !renderer) return;
-        object.rotation.y += 0.01;
+        pivot.rotation.y += 0.01;
         renderer.render(scene, camera);
         frameId = requestAnimationFrame(animate);
       }
