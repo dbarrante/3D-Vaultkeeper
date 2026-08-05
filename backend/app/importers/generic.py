@@ -39,13 +39,23 @@ class GenericImporter:
             seen = set()
             for link in soup.find_all("a", href=True):
                 href = link["href"]
-                if not href.lower().split("?")[0].endswith(FILE_EXTENSIONS):
+                href_path = href.lower().split("?")[0]
+                has_extension = href_path.endswith(FILE_EXTENSIONS)
+                # Many sites (Thingiverse among them) expose downloads via
+                # extensionless paths like `/download:12345`, so treat any
+                # link whose path mentions "download" as a candidate too.
+                looks_like_download = "/download" in href_path
+                if not has_extension and not looks_like_download:
                     continue
                 file_url = urljoin(url, href)
                 if file_url in seen:
                     continue
                 seen.add(file_url)
-                filename = os.path.basename(urlparse(file_url).path)
+                filename = os.path.basename(urlparse(file_url).path) or "download"
+                # Without an extension in the URL there is nothing to derive a
+                # real type from at discovery time; default to "stl" (the batch
+                # endpoint needs *some* extension to save the file under).
+                type_name = filename.rsplit(".", 1)[-1] if has_extension else "stl"
                 files.append(
                     {
                         "source": "generic",
@@ -54,7 +64,7 @@ class GenericImporter:
                         "name": filename,
                         "folder": None,
                         "previewPath": "",
-                        "typeName": filename.rsplit(".", 1)[-1],
+                        "typeName": type_name,
                     }
                 )
 
@@ -72,6 +82,15 @@ class GenericImporter:
         try:
             file = session.get(fileUrl, headers={"User-Agent": USER_AGENT}, allow_redirects=True, timeout=120)
             file.raise_for_status()
+            # A link that merely *looks* like a file (or a "/download" path that
+            # redirects to a landing page) otherwise gets saved verbatim as a
+            # corrupt .stl. Raising here lets the batch endpoint report it.
+            content_type = file.headers.get("Content-Type", "").lower()
+            if "text/html" in content_type or "text/plain" in content_type:
+                raise ValueError(
+                    f"Expected a 3D file but got {content_type or 'unknown content type'} "
+                    "-- likely a landing page, not a direct download link"
+                )
             return file, ""
         finally:
             session.close()

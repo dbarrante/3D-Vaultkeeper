@@ -99,6 +99,14 @@ const App = () => {
     existingFolderId: string;
     existingFolderName: string;
   } | null>(null);
+  // "Add to existing folder" only actually reuses the colliding folder when the
+  // name field still resolves to it. Mirrors the backend's own lookup, which
+  // compares `folderName.strip()` against `folders.name` with a plain
+  // case-sensitive `=` (backend/app/routers/importers.py) -- so trim, but do
+  // not lowercase, or the guard would disagree with what reuse really does.
+  const canReuseCollidingFolder =
+    importCollision !== null &&
+    importProjectTitle.trim() === importCollision.existingFolderName;
   const port = resolveApiOrigin();
   // Delete Confirmation State
   const [deleteConfirmState, setDeleteConfirmState] = useState<{
@@ -662,6 +670,15 @@ const App = () => {
     }
   };
 
+  // A batch import can produce dozens of models at once; regenerating their
+  // thumbnails in parallel would fire N simultaneous fetches + full-file-in-
+  // memory WebGL renders. Run them one at a time instead, in the background.
+  const regenerateThumbnailsSequentially = async (newModels: STLModel[]) => {
+    for (const m of newModels) {
+      await handleUpdateSTEPThumbnail(m).catch(() => {});
+    }
+  };
+
   const handleImportChoice = async (resolution?: "reuse" | "createNew") => {
     const filesToImport = modelsOptions.filter((m) => selectedOptions.has(m.id));
     if (!importUrl || filesToImport.length === 0) return;
@@ -682,9 +699,7 @@ const App = () => {
           ? prev.map((f) => (f.id === result.folder.id ? result.folder : f))
           : [...prev, result.folder],
       );
-      result.models.forEach((m) => {
-        handleUpdateSTEPThumbnail(m).catch(() => {});
-      });
+      void regenerateThumbnailsSequentially(result.models);
       setImportCollision(null);
       if (result.failed.length > 0) {
         alert(
@@ -1430,7 +1445,8 @@ const App = () => {
                           <button
                             type="button"
                             onClick={() => handleImportChoice("reuse")}
-                            className="px-3 py-1.5 text-xs rounded bg-vault-700 hover:bg-vault-600 text-white"
+                            disabled={!canReuseCollidingFolder}
+                            className="px-3 py-1.5 text-xs rounded bg-vault-700 hover:bg-vault-600 text-white disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-vault-700"
                           >
                             Add to existing folder
                           </button>
@@ -1442,6 +1458,15 @@ const App = () => {
                             Create a new folder anyway
                           </button>
                         </div>
+                        {!canReuseCollidingFolder && (
+                          <p className="mt-2 text-xs text-amber-300/80">
+                            You've changed the folder name, so there's nothing
+                            to add to. Rename it back to "
+                            {importCollision.existingFolderName}" to reuse that
+                            folder, or use "Create a new folder anyway" to
+                            import under the new name.
+                          </p>
+                        )}
                       </div>
                     )}
 
