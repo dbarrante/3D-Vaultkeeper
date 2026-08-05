@@ -1,6 +1,7 @@
 import os
 import shutil
 from pathlib import Path
+from typing import Optional
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -15,6 +16,7 @@ from app.services.file_view_ops import (
     validate_destination,
     find_affected_models,
 )
+from app.services.import_wizard import sanitize_path_segment
 
 router = APIRouter(prefix="/api/file-view", tags=["file-view"])
 
@@ -171,3 +173,55 @@ def delete_folder(body: FolderDeleteRequest):
         directory_removed = not target.exists()
 
     return {"deletedModels": deleted, "path": str(target), "directoryRemoved": directory_removed}
+
+
+class FolderCreateRequest(BaseModel):
+    parentPath: Optional[str] = None
+    name: str
+
+
+@router.post("/folder")
+def create_folder(body: FolderCreateRequest):
+    parent_path = body.parentPath if body.parentPath else str(UPLOAD_DIR)
+    try:
+        ensure_unambiguous_path(parent_path)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    parent = Path(parent_path)
+    if not parent.is_dir():
+        raise HTTPException(status_code=404, detail=f"Parent folder not found: {parent_path}")
+
+    try:
+        resolve_storage_mode_for_path(parent)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    sanitized_name = sanitize_path_segment(body.name)
+    new_dir = parent / sanitized_name
+    if new_dir.exists():
+        raise HTTPException(status_code=409, detail=f"A folder already exists at {new_dir}")
+
+    new_dir.mkdir(parents=True)
+
+    conn = get_db_conn()
+    try:
+        conn.execute(
+            "INSERT INTO file_view_tracked_folders(path) VALUES (?)",
+            (str(new_dir),),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    return {"path": str(new_dir)}
+
+
+@router.get("/tracked-folders")
+def get_tracked_folders():
+    conn = get_db_conn()
+    try:
+        rows = conn.execute("SELECT path FROM file_view_tracked_folders").fetchall()
+    finally:
+        conn.close()
+    return {"paths": [row["path"] for row in rows]}

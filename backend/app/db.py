@@ -134,6 +134,13 @@ def init_db() -> None:
         )
         """
     )
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS file_view_tracked_folders (
+            path TEXT PRIMARY KEY
+        )
+        """
+    )
     if os.getenv("MAKERWORLD_BAMBU_TOKEN"):
         cur.execute(
             "INSERT OR IGNORE INTO settings(key,value) VALUES (?,?)",

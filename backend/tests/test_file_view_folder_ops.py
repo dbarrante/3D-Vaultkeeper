@@ -671,3 +671,104 @@ def test_move_folder_ordinary_subfolder_of_watch_root_still_works(client, tmp_pa
     assert not ordinary.exists()
     assert Path(target).exists()
     assert outer.exists()
+
+
+def test_create_folder_under_real_parent_creates_dir_and_tracks_it(client, tmp_path):
+    from app.db import get_db_conn
+    upload_dir = Path(os.environ["FILE_STORAGE"])
+    parent = upload_dir / "Vehicles"
+    parent.mkdir()
+
+    resp = client.post("/api/file-view/folder", json={"parentPath": str(parent), "name": "Tanks"})
+    assert resp.status_code == 200
+    new_path = Path(resp.json()["path"])
+    assert new_path == parent / "Tanks"
+    assert new_path.is_dir()
+
+    conn = get_db_conn()
+    row = conn.execute(
+        "SELECT path FROM file_view_tracked_folders WHERE path=?", (str(new_path),)
+    ).fetchone()
+    conn.close()
+    assert row is not None
+
+
+def test_create_folder_with_no_parent_path_defaults_to_upload_dir(client, tmp_path):
+    upload_dir = Path(os.environ["FILE_STORAGE"])
+
+    resp = client.post("/api/file-view/folder", json={"parentPath": None, "name": "TopLevel"})
+    assert resp.status_code == 200
+    new_path = Path(resp.json()["path"])
+    assert new_path == upload_dir / "TopLevel"
+    assert new_path.is_dir()
+
+
+def test_create_folder_under_watch_root_works(client, tmp_path):
+    from app.db import get_db_conn
+    watch_root = tmp_path / "watched"
+    watch_root.mkdir()
+
+    conn = get_db_conn()
+    _insert_folder(conn, "f1", "Root")
+    conn.execute(
+        "INSERT INTO watch_folders(id,path,folderId) VALUES (?,?,?)",
+        ("wf1", str(watch_root), "f1"),
+    )
+    conn.commit()
+    conn.close()
+
+    resp = client.post("/api/file-view/folder", json={"parentPath": str(watch_root), "name": "Prints"})
+    assert resp.status_code == 200
+    new_path = Path(resp.json()["path"])
+    assert new_path == watch_root / "Prints"
+    assert new_path.is_dir()
+
+
+def test_create_folder_outside_every_allowed_root_rejected(client, tmp_path):
+    outside = tmp_path / "elsewhere"
+    outside.mkdir()
+
+    resp = client.post("/api/file-view/folder", json={"parentPath": str(outside), "name": "New"})
+    assert resp.status_code == 400
+    assert not (outside / "New").exists()
+
+
+def test_create_folder_name_is_sanitized(client, tmp_path):
+    upload_dir = Path(os.environ["FILE_STORAGE"])
+
+    resp = client.post("/api/file-view/folder", json={"parentPath": None, "name": "Bad<>Name"})
+    assert resp.status_code == 200
+    new_path = Path(resp.json()["path"])
+    assert "<" not in new_path.name
+    assert ">" not in new_path.name
+    assert new_path.is_dir()
+
+
+def test_create_folder_collision_rejected(client, tmp_path):
+    upload_dir = Path(os.environ["FILE_STORAGE"])
+    existing = upload_dir / "Existing"
+    existing.mkdir()
+
+    resp = client.post("/api/file-view/folder", json={"parentPath": None, "name": "Existing"})
+    assert resp.status_code == 409
+
+
+def test_create_folder_missing_parent_404s(client, tmp_path):
+    upload_dir = Path(os.environ["FILE_STORAGE"])
+    missing_parent = upload_dir / "DoesNotExist"
+
+    resp = client.post("/api/file-view/folder", json={"parentPath": str(missing_parent), "name": "X"})
+    assert resp.status_code == 404
+
+
+def test_get_tracked_folders_returns_created_paths(client, tmp_path):
+    upload_dir = Path(os.environ["FILE_STORAGE"])
+
+    client.post("/api/file-view/folder", json={"parentPath": None, "name": "Alpha"})
+    client.post("/api/file-view/folder", json={"parentPath": None, "name": "Beta"})
+
+    resp = client.get("/api/file-view/tracked-folders")
+    assert resp.status_code == 200
+    paths = resp.json()["paths"]
+    assert str(upload_dir / "Alpha") in paths
+    assert str(upload_dir / "Beta") in paths
