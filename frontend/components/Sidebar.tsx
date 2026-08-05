@@ -840,48 +840,49 @@ const Sidebar: React.FC<SidebarProps> = ({
         >
           New Folder
         </MenuItem>
-        {folderContextMenu?.realPath !== null && (
-          <>
-            <MenuItem
-              onClick={() => {
-                if (folderContextMenu?.realPath) handleRenameFileViewFolder(folderContextMenu.nodeId, folderContextMenu.realPath);
-                setFolderContextMenu(null);
-              }}
-            >
-              Rename
-            </MenuItem>
-            <MenuItem
-              onClick={() => {
-                if (folderContextMenu?.realPath) {
-                  const targetParent = window.prompt(
-                    "Move to which real folder path? (paste the full destination directory)",
-                    folderContextMenu.realPath,
-                  );
-                  if (targetParent && targetParent !== folderContextMenu.realPath) {
-                    api
-                      .moveFileViewFolder(folderContextMenu.realPath, targetParent)
-                      .then(onFileViewMutated)
-                      .catch((err) => {
-                        console.error("Folder move failed:", err);
-                        alert(err instanceof Error ? err.message : "Folder move failed");
-                      });
-                  }
+        {folderContextMenu !== null && folderContextMenu.realPath !== null && [
+          <MenuItem
+            key="rename"
+            onClick={() => {
+              if (folderContextMenu?.realPath) handleRenameFileViewFolder(folderContextMenu.nodeId, folderContextMenu.realPath);
+              setFolderContextMenu(null);
+            }}
+          >
+            Rename
+          </MenuItem>,
+          <MenuItem
+            key="move"
+            onClick={() => {
+              if (folderContextMenu?.realPath) {
+                const targetParent = window.prompt(
+                  "Move to which real folder path? (paste the full destination directory)",
+                  folderContextMenu.realPath,
+                );
+                if (targetParent && targetParent !== folderContextMenu.realPath) {
+                  api
+                    .moveFileViewFolder(folderContextMenu.realPath, targetParent)
+                    .then(onFileViewMutated)
+                    .catch((err) => {
+                      console.error("Folder move failed:", err);
+                      alert(err instanceof Error ? err.message : "Folder move failed");
+                    });
                 }
-                setFolderContextMenu(null);
-              }}
-            >
-              Move
-            </MenuItem>
-            <MenuItem
-              onClick={() => {
-                if (folderContextMenu?.realPath) handleDeleteFileViewFolder(folderContextMenu.nodeId, folderContextMenu.realPath);
-                setFolderContextMenu(null);
-              }}
-            >
-              Delete
-            </MenuItem>
-          </>
-        )}
+              }
+              setFolderContextMenu(null);
+            }}
+          >
+            Move
+          </MenuItem>,
+          <MenuItem
+            key="delete"
+            onClick={() => {
+              if (folderContextMenu?.realPath) handleDeleteFileViewFolder(folderContextMenu.nodeId, folderContextMenu.realPath);
+              setFolderContextMenu(null);
+            }}
+          >
+            Delete
+          </MenuItem>,
+        ]}
       </Menu>
 
       <div className="p-4 border-t border-vault-700 z-10 gap-3 flex flex-col">
