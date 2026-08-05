@@ -441,8 +441,16 @@ def replace_model_file(model_id: str, file: UploadFile = File(...), thumbnail: O
     filename = f"{model_id}{ext}"
     path = os.path.join(UPLOAD_DIR, filename)
     size = save_upload_file(file, path)
+    # thumbnailFailed=0 alongside thumbnail: a model that was previously
+    # permanently quarantined (thumbnailFailed=1, e.g. its original file was
+    # corrupt) just got a brand-new file, which genuinely deserves a fresh
+    # shot at thumbnail generation regardless of the old file's fate.
+    # Without this, the thumbnail-queue endpoint's
+    # WHERE (thumbnailFailed IS NULL OR thumbnailFailed = 0) filter would
+    # permanently exclude it even though it can now genuinely be rendered --
+    # there's no other mechanism anywhere in the app to reset this flag.
     cur.execute(
-        "UPDATE models SET url=?, size=?, thumbnail=?, filePath=? WHERE id=?",
+        "UPDATE models SET url=?, size=?, thumbnail=?, thumbnailFailed=0, filePath=? WHERE id=?",
         (f"/api/models/{model_id}/download", size, thumbnail, path, model_id),
     )
     conn.commit()

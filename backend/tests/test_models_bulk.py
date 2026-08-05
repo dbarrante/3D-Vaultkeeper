@@ -44,6 +44,28 @@ def test_replace_model_file_updates_size(client):
     assert response.json()["size"] == len(b"solid bigger file content endsolid")
 
 
+def test_replace_model_file_clears_thumbnail_failed(client):
+    # A model previously permanently quarantined by the background thumbnail
+    # loop (thumbnailFailed=1, e.g. its original file was corrupt) gets a
+    # brand-new file. It genuinely deserves a fresh shot at thumbnail
+    # generation, so thumbnailFailed must come back false/unset -- otherwise
+    # the thumbnail-queue endpoint's filter would exclude it forever even
+    # though it can now be rendered.
+    a = _upload(client, "a.stl")
+    client.patch(f"/api/models/{a['id']}", json={"thumbnailFailed": True})
+    assert client.get("/api/models/thumbnail-queue").json() == []
+
+    response = client.put(
+        f"/api/models/{a['id']}/file",
+        files={"file": ("a2.stl", b"solid replacement content endsolid", "application/octet-stream")},
+    )
+    assert response.status_code == 200
+    assert response.json()["thumbnailFailed"] is False
+
+    queued = client.get("/api/models/thumbnail-queue").json()
+    assert any(m["id"] == a["id"] for m in queued)
+
+
 def test_replace_model_thumbnail_stores_base64_data_uri(client):
     a = _upload(client, "a.stl")
     response = client.put(
