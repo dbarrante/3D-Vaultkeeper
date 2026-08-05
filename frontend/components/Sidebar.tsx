@@ -386,13 +386,18 @@ const Sidebar: React.FC<SidebarProps> = ({
     mouseX: number;
     mouseY: number;
     nodeId: string;
-    realPath: string;
+    realPath: string | null;
   } | null>(null);
 
+  // The Uploads bucket isn't a real single directory, so it gets a menu
+  // with only New Folder (realPath: null, meaning "create at the library
+  // root" -- see handleCreateFileViewFolder's parentPath contract). Every
+  // other node keeps the full Rename/Move/Delete/New Folder menu, gated on
+  // having a resolvable real path.
   const handleFileTreeContextMenu = (e: React.MouseEvent, nodeId: string) => {
-    if (nodeId === FILE_VIEW_UPLOADS_BUCKET_ID) return; // synthetic bucket, not a real single folder
-    const realPath = fileTree.realPaths.get(nodeId);
-    if (!realPath) return;
+    const isUploadsBucket = nodeId === FILE_VIEW_UPLOADS_BUCKET_ID;
+    const realPath = isUploadsBucket ? null : fileTree.realPaths.get(nodeId) ?? null;
+    if (!isUploadsBucket && !realPath) return;
     e.preventDefault();
     e.stopPropagation();
     setFolderContextMenu({ mouseX: e.clientX - 2, mouseY: e.clientY - 4, nodeId, realPath });
@@ -452,6 +457,18 @@ const Sidebar: React.FC<SidebarProps> = ({
     } catch (err) {
       console.error("Folder delete failed:", err);
       alert(err instanceof Error ? err.message : "Folder delete failed");
+    }
+  };
+
+  const handleCreateFileViewFolder = async (parentPath: string | null) => {
+    const name = window.prompt("New folder name:");
+    if (!name) return;
+    try {
+      await api.createFileViewFolder(parentPath, name);
+      onFileViewMutated();
+    } catch (err) {
+      console.error("Folder creation failed:", err);
+      alert(err instanceof Error ? err.message : "Folder creation failed");
     }
   };
 
@@ -776,6 +793,14 @@ const Sidebar: React.FC<SidebarProps> = ({
               File
             </button>
           </div>
+          {viewMode === "file" && (
+            <button
+              onClick={() => handleCreateFileViewFolder(null)}
+              className="w-full text-xs py-1 mb-2 rounded bg-vault-800 text-slate-300 hover:bg-vault-700"
+            >
+              + New Folder
+            </button>
+          )}
           {viewMode === "logical" ? (
             <RichTreeView
               items={treefolders()}
@@ -809,42 +834,54 @@ const Sidebar: React.FC<SidebarProps> = ({
       >
         <MenuItem
           onClick={() => {
-            if (folderContextMenu) handleRenameFileViewFolder(folderContextMenu.nodeId, folderContextMenu.realPath);
+            if (folderContextMenu) handleCreateFileViewFolder(folderContextMenu.realPath);
             setFolderContextMenu(null);
           }}
         >
-          Rename
+          New Folder
         </MenuItem>
-        <MenuItem
-          onClick={() => {
-            if (folderContextMenu) {
-              const targetParent = window.prompt(
-                "Move to which real folder path? (paste the full destination directory)",
-                folderContextMenu.realPath,
-              );
-              if (targetParent && targetParent !== folderContextMenu.realPath) {
-                api
-                  .moveFileViewFolder(folderContextMenu.realPath, targetParent)
-                  .then(onFileViewMutated)
-                  .catch((err) => {
-                    console.error("Folder move failed:", err);
-                    alert(err instanceof Error ? err.message : "Folder move failed");
-                  });
-              }
-            }
-            setFolderContextMenu(null);
-          }}
-        >
-          Move
-        </MenuItem>
-        <MenuItem
-          onClick={() => {
-            if (folderContextMenu) handleDeleteFileViewFolder(folderContextMenu.nodeId, folderContextMenu.realPath);
-            setFolderContextMenu(null);
-          }}
-        >
-          Delete
-        </MenuItem>
+        {folderContextMenu?.realPath !== null && (
+          <>
+            <MenuItem
+              onClick={() => {
+                if (folderContextMenu?.realPath) handleRenameFileViewFolder(folderContextMenu.nodeId, folderContextMenu.realPath);
+                setFolderContextMenu(null);
+              }}
+            >
+              Rename
+            </MenuItem>
+            <MenuItem
+              onClick={() => {
+                if (folderContextMenu?.realPath) {
+                  const targetParent = window.prompt(
+                    "Move to which real folder path? (paste the full destination directory)",
+                    folderContextMenu.realPath,
+                  );
+                  if (targetParent && targetParent !== folderContextMenu.realPath) {
+                    api
+                      .moveFileViewFolder(folderContextMenu.realPath, targetParent)
+                      .then(onFileViewMutated)
+                      .catch((err) => {
+                        console.error("Folder move failed:", err);
+                        alert(err instanceof Error ? err.message : "Folder move failed");
+                      });
+                  }
+                }
+                setFolderContextMenu(null);
+              }}
+            >
+              Move
+            </MenuItem>
+            <MenuItem
+              onClick={() => {
+                if (folderContextMenu?.realPath) handleDeleteFileViewFolder(folderContextMenu.nodeId, folderContextMenu.realPath);
+                setFolderContextMenu(null);
+              }}
+            >
+              Delete
+            </MenuItem>
+          </>
+        )}
       </Menu>
 
       <div className="p-4 border-t border-vault-700 z-10 gap-3 flex flex-col">
