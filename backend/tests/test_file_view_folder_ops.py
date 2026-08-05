@@ -929,3 +929,33 @@ def test_tracked_folder_survives_being_emptied_out(client, tmp_path):
     resp = client.get("/api/file-view/tracked-folders")
     assert tracked_path in resp.json()["paths"]
     assert tracked_dir.is_dir()
+
+
+def test_rename_tracked_folder_itself_updates_its_own_row(client, tmp_path):
+    """The other three sync tests only cover renaming/moving/deleting an
+    ANCESTOR of a tracked folder. This covers renaming the tracked folder's
+    own path directly -- the rel == "." branch in
+    rewrite_tracked_folder_paths, and the most common real UI flow (create a
+    folder, then immediately rename it).
+    """
+    from app.db import get_db_conn
+    upload_dir = Path(os.environ["FILE_STORAGE"])
+
+    resp = client.post("/api/file-view/folder", json={"parentPath": None, "name": "Tanks"})
+    tracked_path = resp.json()["path"]
+
+    resp = client.post("/api/file-view/folder/rename", json={"path": tracked_path, "newName": "Armor"})
+    assert resp.status_code == 200
+
+    new_expected = str(upload_dir / "Armor")
+    conn = get_db_conn()
+    old_row = conn.execute(
+        "SELECT path FROM file_view_tracked_folders WHERE path=?", (tracked_path,)
+    ).fetchone()
+    new_row = conn.execute(
+        "SELECT path FROM file_view_tracked_folders WHERE path=?", (new_expected,)
+    ).fetchone()
+    conn.close()
+    assert old_row is None
+    assert new_row is not None
+    assert Path(new_expected).is_dir()
