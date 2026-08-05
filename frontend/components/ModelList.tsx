@@ -24,6 +24,7 @@ import {
   SLICERS,
   SlicerType,
 } from "../services/api";
+import HoverPreviewCanvas from "./HoverPreviewCanvas";
 
 import Card from "@mui/material/Card";
 import CardContent from "@mui/material/CardContent";
@@ -174,6 +175,28 @@ const ModelList: React.FC<ModelListProps> = ({
   );
   const [dragOverFolderId, setDragOverFolderId] = useState<string | null>(null);
   const [isTouchDevice, setIsTouchDevice] = useState(false);
+
+  // Live auto-rotating hover preview: which model (if any) currently has a
+  // live 3D scene mounted in place of its static thumbnail. This is a
+  // single piece of state, not per-card, so starting a hover preview on a
+  // different card automatically tears down whichever one was previously
+  // active -- only one live WebGL scene is ever mounted at a time.
+  const [hoveredPreviewModelId, setHoveredPreviewModelId] = useState<
+    string | null
+  >(null);
+  const hoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Same STL/3MF/STEP format restriction as the static-thumbnail generation
+  // in Tasks 1/3.
+  const isHoverPreviewEligible = (model: STLModel): boolean => {
+    const lower = model.name.toLowerCase();
+    return (
+      lower.endsWith(".stl") ||
+      lower.endsWith(".3mf") ||
+      lower.endsWith(".step") ||
+      lower.endsWith(".stp")
+    );
+  };
 
   const [anchorEl, setAnchorEl] = React.useState<null | HTMLElement>(null);
   const [slicerAnchorEl, setSlicerAnchorEl] =
@@ -700,11 +723,38 @@ const ModelList: React.FC<ModelListProps> = ({
                       onSelectModel(model);
                     }
                   }}
+                  onMouseEnter={() => {
+                    if (!isHoverPreviewEligible(model)) return;
+                    if (hoverTimerRef.current)
+                      clearTimeout(hoverTimerRef.current);
+                    hoverTimerRef.current = setTimeout(
+                      () => setHoveredPreviewModelId(model.id),
+                      400,
+                    );
+                  }}
+                  onMouseLeave={() => {
+                    if (hoverTimerRef.current)
+                      clearTimeout(hoverTimerRef.current);
+                    hoverTimerRef.current = null;
+                    setHoveredPreviewModelId((current) =>
+                      current === model.id ? null : current,
+                    );
+                  }}
                   className={`group cursor-pointer transition-all duration-200 hover:shadow-lg hover:-translate-y-1 relative active:cursor-grabbing`}
                 >
                   <Card raised={isSelected}>
                     <CardActionArea>
-                      {model.thumbnail ? (
+                      {hoveredPreviewModelId === model.id &&
+                      isHoverPreviewEligible(model) ? (
+                        <HoverPreviewCanvas
+                          model={model}
+                          onError={() =>
+                            setHoveredPreviewModelId((current) =>
+                              current === model.id ? null : current,
+                            )
+                          }
+                        />
+                      ) : model.thumbnail ? (
                         <CardMedia
                           component="div"
                           className="h-60 object-cover"
