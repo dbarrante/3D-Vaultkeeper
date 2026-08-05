@@ -12,13 +12,14 @@ router = APIRouter()
 class FolderData(BaseModel):
     name: str
     parentId: Union[str, None] = None
+    description: Union[str, None] = None
 
 
 @router.get("/api/folders")
 def get_folders():
     conn = get_db_conn()
     cur = conn.cursor()
-    cur.execute("SELECT id,name,parentId FROM folders")
+    cur.execute("SELECT id,name,parentId,description FROM folders")
     rows = cur.fetchall()
     conn.close()
     return [row_to_folder(r) for r in rows]
@@ -30,12 +31,12 @@ def create_folder(item: FolderData):
     conn = get_db_conn()
     cur = conn.cursor()
     cur.execute(
-        "INSERT INTO folders(id,name,parentId) VALUES (?,?,?)",
-        (fid, item.name, item.parentId),
+        "INSERT INTO folders(id,name,parentId,description) VALUES (?,?,?,?)",
+        (fid, item.name, item.parentId, item.description),
     )
     conn.commit()
     conn.close()
-    return {"id": fid, "name": item.name, "parentId": item.parentId}
+    return {"id": fid, "name": item.name, "parentId": item.parentId, "description": item.description}
 
 
 @router.patch("/api/folders/{folder_id}")
@@ -47,7 +48,7 @@ def update_folder(folder_id: str, item: FolderData):
         conn.close()
         raise HTTPException(status_code=404, detail="Folder not found")
     conn.commit()
-    cur.execute("SELECT id,name,parentId FROM folders WHERE id=?", (folder_id,))
+    cur.execute("SELECT id,name,parentId,description FROM folders WHERE id=?", (folder_id,))
     row = cur.fetchone()
     conn.close()
     return row_to_folder(row)

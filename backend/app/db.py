@@ -68,6 +68,10 @@ def init_db() -> None:
         )
         """
     )
+    try:
+        cur.execute("ALTER TABLE folders ADD COLUMN description TEXT")
+    except sqlite3.OperationalError:
+        pass
     cur.execute(
         """
         CREATE TABLE IF NOT EXISTS models (
@@ -197,7 +201,12 @@ def now_ms() -> int:
 
 
 def row_to_folder(row: sqlite3.Row) -> Dict[str, Any]:
-    return {"id": row["id"], "name": row["name"], "parentId": row["parentId"]}
+    return {
+        "id": row["id"],
+        "name": row["name"],
+        "parentId": row["parentId"],
+        "description": row["description"],
+    }
 
 
 def row_to_model(row: sqlite3.Row) -> Dict[str, Any]:

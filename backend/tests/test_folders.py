@@ -67,3 +67,26 @@ def test_delete_folder_with_only_tombstoned_models_succeeds(client, tmp_path):
     response = client.delete(f"/api/folders/{folder['id']}")
     assert response.status_code == 200
     assert response.json() == {"ok": True}
+
+
+def test_create_folder_with_description(client):
+    response = client.post(
+        "/api/folders",
+        json={"name": "Imported Project", "parentId": None, "description": "A cool print"},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["description"] == "A cool print"
+
+
+def test_create_folder_without_description_defaults_to_none(client):
+    response = client.post("/api/folders", json={"name": "Minis", "parentId": None})
+    assert response.status_code == 200
+    assert response.json()["description"] is None
+
+
+def test_get_folders_includes_description_field(client):
+    client.post("/api/folders", json={"name": "Has Desc", "parentId": None, "description": "hello"})
+    response = client.get("/api/folders")
+    match = next(f for f in response.json() if f["name"] == "Has Desc")
+    assert match["description"] == "hello"
