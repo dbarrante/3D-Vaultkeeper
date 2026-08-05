@@ -48,6 +48,7 @@ const App = () => {
     used: 0,
     total: 0,
   });
+  const [trackedFolderPaths, setTrackedFolderPaths] = useState<string[]>([]);
 
   const [currentFolderId, setCurrentFolderId] = useState<string>("all");
   const [viewMode, setViewMode] = useState<"logical" | "file">("logical");
@@ -98,12 +99,13 @@ const App = () => {
   const fetchData = useCallback(async () => {
     setIsLoading(true);
     try {
-      const [fetchedFolders, fetchedModels, fetchedStats] = await Promise.all(
-        [api.getFolders(), api.getModels("all"), api.getStorageStats()],
+      const [fetchedFolders, fetchedModels, fetchedStats, fetchedTrackedPaths] = await Promise.all(
+        [api.getFolders(), api.getModels("all"), api.getStorageStats(), api.getFileViewTrackedFolders()],
       );
       setFolders(fetchedFolders);
       setModels(fetchedModels);
       setStorageStats(fetchedStats);
+      setTrackedFolderPaths(fetchedTrackedPaths);
     } catch (error) {
       console.error("Failed to fetch data:", error);
     } finally {
@@ -756,6 +758,7 @@ const App = () => {
               setCurrentFolderId("all"); // avoid a stale id from one mode being misread as the other mode's id
             }}
             onFileViewMutated={fetchData}
+            trackedFolderPaths={trackedFolderPaths}
             variant="desktop"
           />
         ) : (
@@ -811,6 +814,7 @@ const App = () => {
                       setCurrentFolderId("all"); // avoid a stale id from one mode being misread as the other mode's id
                     }}
                     onFileViewMutated={fetchData}
+                    trackedFolderPaths={trackedFolderPaths}
                     variant="mobile"
                   />
                 </div>

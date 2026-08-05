@@ -110,6 +110,20 @@ export function fileViewSegments(filePath: string): string[] {
   return uploadDirIndex >= 0 ? segments.slice(uploadDirIndex + 1) : segments;
 }
 
+/**
+ * Same "meaningful segments" derivation as fileViewSegments, but for a raw
+ * folder path rather than a file path -- there's no filename to drop, so
+ * this skips the .pop() step fileViewSegments does. Used for tracked
+ * (possibly empty) File-mode folders, which have no model file to derive
+ * segments from.
+ */
+export function fileViewFolderSegments(folderPath: string): string[] {
+  const normalized = folderPath.replace(/\\/g, "/");
+  const segments = normalized.split("/").filter((s) => s.length > 0);
+  const uploadDirIndex = segments.findIndex((s) => s.toLowerCase() === "uploads");
+  return uploadDirIndex >= 0 ? segments.slice(uploadDirIndex + 1) : segments;
+}
+
 export interface ImportPlacement {
   sourcePath: string;
   isFolder: boolean;

@@ -273,6 +273,29 @@ export const api = {
     return res.json();
   },
 
+  createFileViewFolder: async (
+    parentPath: string | null,
+    name: string,
+  ): Promise<{ path: string }> => {
+    const res = await fetch(`${getApiBaseUrl()}/file-view/folder`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ parentPath, name }),
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.detail || "Failed to create folder");
+    }
+    return res.json();
+  },
+
+  getFileViewTrackedFolders: async (): Promise<string[]> => {
+    const res = await fetch(`${getApiBaseUrl()}/file-view/tracked-folders`);
+    if (!res.ok) throw new Error("Failed to fetch tracked folders");
+    const body = await res.json();
+    return body.paths;
+  },
+
   // 9. GET Download URL
   getDownloadUrl: (model: STLModel) => {
     return `${getApiBaseUrl()}/models/${model.id}/download`;

@@ -13,7 +13,7 @@ import {
   PlusIcon,
 } from "lucide-react";
 import { Folder, STLModel, StorageStats } from "../types";
-import { FILE_VIEW_UPLOADS_BUCKET_ID, fileViewSegments } from "../types";
+import { FILE_VIEW_UPLOADS_BUCKET_ID, fileViewSegments, fileViewFolderSegments } from "../types";
 
 import Stack from "@mui/material/Stack";
 import IconButton from "@mui/material/IconButton";
@@ -63,6 +63,7 @@ interface SidebarProps {
   viewMode: "logical" | "file";
   onViewModeChange?: (mode: "logical" | "file") => void;
   onFileViewMutated: () => void;
+  trackedFolderPaths: string[];
 }
 
 const Sidebar: React.FC<SidebarProps> = ({
@@ -81,6 +82,7 @@ const Sidebar: React.FC<SidebarProps> = ({
   viewMode,
   onViewModeChange,
   onFileViewMutated,
+  trackedFolderPaths,
 }) => {
   const isDesktopVariant = variant === "desktop";
   const [isCreatingRoot, setIsCreatingRoot] = useState(false);
@@ -345,13 +347,40 @@ const Sidebar: React.FC<SidebarProps> = ({
       });
     });
 
+    // Tracked (possibly empty) folders get the same node-creation treatment
+    // as model-derived ones, but seeded from a raw folder path instead of a
+    // model's filePath -- there's no filename to drop, so this uses
+    // fileViewFolderSegments instead of fileViewSegments. A tracked folder
+    // that already has models under it is a no-op here: childMap already
+    // has every node on its chain from the walk above.
+    trackedFolderPaths.forEach((trackedPath) => {
+      const meaningfulSegments = fileViewFolderSegments(trackedPath);
+      if (meaningfulSegments.length === 0) return;
+
+      const rawSegments = trackedPath.replace(/\\/g, "/").split("/").filter((s) => s.length > 0);
+      const dropped = rawSegments.length - meaningfulSegments.length;
+
+      let cursor = root;
+      let idPath = "file";
+      meaningfulSegments.forEach((segment, index) => {
+        idPath += `/${segment}`;
+        if (!cursor.childMap[segment]) {
+          const node: FileNode = { id: idPath, label: segment, children: [], childMap: {} };
+          cursor.childMap[segment] = node;
+          cursor.children.push(node);
+          realPaths.set(idPath, rawSegments.slice(0, dropped + index + 1).join("/"));
+        }
+        cursor = cursor.childMap[segment];
+      });
+    });
+
     const strip = (node: FileNode): TreeViewDefaultItemModelProperties => ({
       id: node.id,
       label: node.label,
       children: node.children.map(strip),
     });
     return { items: root.children.map(strip), realPaths };
-  }, [models]);
+  }, [models, trackedFolderPaths]);
 
   const [folderContextMenu, setFolderContextMenu] = useState<{
     mouseX: number;
