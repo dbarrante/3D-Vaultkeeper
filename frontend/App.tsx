@@ -100,7 +100,12 @@ const App = () => {
     setIsLoading(true);
     try {
       const [fetchedFolders, fetchedModels, fetchedStats, fetchedTrackedPaths] = await Promise.all(
-        [api.getFolders(), api.getModels("all"), api.getStorageStats(), api.getFileViewTrackedFolders()],
+        [
+          api.getFolders(),
+          api.getModels("all"),
+          api.getStorageStats(),
+          api.getFileViewTrackedFolders().catch(() => [] as string[]),
+        ],
       );
       setFolders(fetchedFolders);
       setModels(fetchedModels);
