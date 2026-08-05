@@ -107,6 +107,17 @@ fragment StlDetail on STLType {
 }
 """
 
+PRINT_META_QUERY = """
+query PrintMeta($id: ID!) {
+  model: print(id: $id) {
+    id
+    name
+    description
+    __typename
+  }
+}
+"""
+
 FILEQUERY = """
 mutation GetDownloadLink($id: ID!, $modelId: ID!, $fileType: DownloadFileTypeEnum!, $source: DownloadSourceEnum!) {
   getDownloadLink(
@@ -206,6 +217,39 @@ class PrintablesImporter:
         except Exception as e:
             raise e
 
+    def _get_print_meta(self, modelId):
+        """Best-effort fetch of the print's own title/description, kept
+        in a separate try/except from _get_model_info's file-listing
+        query so an unexpected field name in Printables' schema here can
+        never break the core (already-proven) file-listing feature --
+        any failure just falls back to empty strings, and getModelOptions
+        falls back further to the first file's own name.
+        """
+        try:
+            header = {
+                "accept": "application/graphql-response+json, application/graphql+json, application/json, text/event-stream, multipart/mixed",
+                "accept-language": "en",
+                "client-uid": self.clientId,
+                "cache-control": "no-cache",
+                "content-type": "application/json",
+                "graphql-client-version": "v3.0.11",
+                "pragma": "no-cache",
+                "priority": "u=1, i",
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36",
+            }
+            response = self.session.post(
+                self.graphurl,
+                json={"query": PRINT_META_QUERY, "variables": {"id": modelId}},
+                headers=header,
+            )
+            if response.status_code != 200:
+                return "", ""
+            data = response.json()
+            model = data.get("data", {}).get("model") or {}
+            return model.get("name") or "", model.get("description") or ""
+        except Exception:
+            return "", ""
+
     def _get_file(self, modelId, parentId):
         header = {
             "accept": "application/graphql-response+json, application/graphql+json, application/json, text/event-stream, multipart/mixed",
@@ -296,7 +340,10 @@ class PrintablesImporter:
             self._set_client_data(url)
             time.sleep(0.2)
             modelData = self._get_model_info(modelId)
-            return modelData
+            title, description = self._get_print_meta(modelId)
+            if not title and modelData:
+                title = modelData[0]["name"].rsplit(".", 1)[0]
+            return {"title": title, "description": description, "files": modelData}
         except Exception as e:
             raise e
         finally:

@@ -67,3 +67,27 @@ def test_import_model_by_id_sets_file_path(client):
     assert row["filePath"] is not None
     assert row["filePath"] == os.path.join(str(UPLOAD_DIR), f"{model['id']}.stl")
     assert os.path.exists(row["filePath"])
+
+
+def test_import_options_returns_title_description_and_files(client):
+    class _FakeImporterWithMeta:
+        def getModelOptions(self, url):
+            return {"title": "My Print", "description": "A neat thing", "files": [{"id": "1", "name": "part.stl"}]}
+
+    with patch("app.routers.importers.printables.PrintablesImporter", return_value=_FakeImporterWithMeta()):
+        response = client.post("/api/import/options", json={"url": "https://www.printables.com/model/1-x"})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["title"] == "My Print"
+    assert body["description"] == "A neat thing"
+    assert body["files"] == [{"id": "1", "name": "part.stl"}]
+
+
+def test_import_options_errors_when_no_files_found(client):
+    class _EmptyImporter:
+        def getModelOptions(self, url):
+            return {"title": "Empty", "description": "", "files": []}
+
+    with patch("app.routers.importers.printables.PrintablesImporter", return_value=_EmptyImporter()):
+        response = client.post("/api/import/options", json={"url": "https://www.printables.com/model/1-x"})
+    assert response.status_code == 400

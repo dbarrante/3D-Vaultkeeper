@@ -117,7 +117,7 @@ class MakerWorldImporter:
                         "typeName": "3mf",
                     }
                 )
-            return options
+            return {"title": title, "description": design.get("description") or "", "files": options}
         finally:
             self.session.close()
 

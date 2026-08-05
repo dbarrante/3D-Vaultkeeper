@@ -76,9 +76,9 @@ def import_model_options(payload: dict):
         if url is not None:
             importer, _source_label = importer_for_url(url)
             modelData = importer.getModelOptions(url)
-            if modelData is not None:
+            if modelData is not None and modelData.get("files"):
                 return modelData
-            raise ValueError("Collection Is Empty")
+            raise ValueError("No importable files found at that URL")
         raise ValueError("URL is None")
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
