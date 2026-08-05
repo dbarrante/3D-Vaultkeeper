@@ -16,6 +16,7 @@ import {
 import {
   generateThumbnail,
   generateThumbnailFromUrl,
+  ThumbnailTransportError,
 } from "./services/thumbnailGenerator";
 import { api, resolveApiOrigin } from "./services/api";
 import {
@@ -155,19 +156,33 @@ const App = () => {
           try {
             thumbnail = await generateThumbnailFromUrl(fileUrl, model.name);
           } catch (renderErr) {
-            console.error(
-              `Thumbnail generation failed for model ${model.id}:`,
-              renderErr,
-            );
-            if (!cancelled) {
-              setModels((prev) =>
-                prev.map((m) =>
-                  m.id === model.id ? { ...m, thumbnailFailed: true } : m,
-                ),
+            if (renderErr instanceof ThumbnailTransportError) {
+              // Same convention as the save-failure branch below: this is a
+              // transient, transport-layer problem (most commonly a
+              // reference-mode model whose source drive is disconnected),
+              // not evidence the file can never be rendered. Log and move
+              // on -- leaving thumbnail NULL means this model naturally
+              // comes back up in the queue on a later tick once the drive
+              // reconnects, instead of being permanently quarantined.
+              console.warn(
+                `Thumbnail generation skipped for model ${model.id} (transport error, will retry later):`,
+                renderErr,
               );
-              await api
-                .updateModel(model.id, { thumbnailFailed: true })
-                .catch(() => {});
+            } else {
+              console.error(
+                `Thumbnail generation failed for model ${model.id}:`,
+                renderErr,
+              );
+              if (!cancelled) {
+                setModels((prev) =>
+                  prev.map((m) =>
+                    m.id === model.id ? { ...m, thumbnailFailed: true } : m,
+                  ),
+                );
+                await api
+                  .updateModel(model.id, { thumbnailFailed: true })
+                  .catch(() => {});
+              }
             }
           }
           if (thumbnail && !cancelled) {

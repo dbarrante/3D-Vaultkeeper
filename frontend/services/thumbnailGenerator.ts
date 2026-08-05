@@ -71,6 +71,18 @@ const renderObjectToDataUrl = (object: THREE.Object3D): string => {
 
   const dataUrl = renderer.domElement.toDataURL("image/png");
   renderer.dispose();
+  // dispose() only frees Three.js-side GPU resources (textures, programs,
+  // etc.) -- it does NOT release the underlying WebGL context itself. This
+  // renderer is thrown away every ~3 seconds by App.tsx's background
+  // thumbnail loop for the entire lifetime of the app session; without
+  // forceContextLoss(), each one leaves a live WebGL context behind and
+  // Chromium's (and every browser's) hard cap on simultaneous contexts gets
+  // hit within under a minute, at which point the browser evicts the OLDEST
+  // context -- which can silently be the hover preview's or the detail
+  // panel's, breaking them with no visible error. Must be called after
+  // dispose(), not instead of it: dispose() still needs a live context to
+  // release its own GPU resources.
+  renderer.forceContextLoss();
 
   return dataUrl;
 };
@@ -130,11 +142,37 @@ export const generateThumbnailFromArrayBuffer = async (
   }
 };
 
+// Thrown by generateThumbnailFromUrl when the fetch itself didn't succeed
+// (e.g. a reference-mode model's GET /api/models/{id}/download 404ing
+// because its source drive is disconnected -- this app's primary ingest
+// path is watch folders on external/network drives, so this is a normal,
+// TRANSIENT condition, not "this file can never be rendered"). Distinct
+// from a thrown parse/render error so App.tsx's background loop can tell
+// "never got real file bytes" apart from "got real bytes, couldn't render
+// them" and avoid permanently quarantining a model for what is really a
+// transport-layer hiccup.
+export class ThumbnailTransportError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ThumbnailTransportError";
+  }
+}
+
 export const generateThumbnailFromUrl = async (
   url: string,
   filename: string,
 ): Promise<string> => {
   const response = await fetch(url);
+  if (!response.ok) {
+    // Do NOT attempt to parse the response body as a model file -- on a
+    // non-ok response it's JSON/HTML error content, not real file bytes,
+    // and feeding it to the STL/3MF/STEP parsers would throw a confusing
+    // low-level parse error that looks identical to a genuinely corrupt
+    // file.
+    throw new ThumbnailTransportError(
+      `Failed to fetch model file for thumbnail generation (${response.status} ${response.statusText}): ${url}`,
+    );
+  }
   const contents = await response.arrayBuffer();
   return generateThumbnailFromArrayBuffer(contents, filename);
 };

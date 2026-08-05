@@ -69,6 +69,7 @@ const HoverPreviewCanvas: React.FC<{
     let renderer: THREE.WebGLRenderer | null = null;
     let frameId: number | null = null;
     let liveObject: THREE.Object3D | null = null;
+    let handleContextLost: ((event: Event) => void) | null = null;
 
     async function setup() {
       const lower = model.name.toLowerCase();
@@ -180,6 +181,31 @@ const HoverPreviewCanvas: React.FC<{
       renderer.setSize(width, height);
       el.appendChild(renderer.domElement);
 
+      // A live WebGL context can be lost for reasons entirely outside this
+      // component's control -- most relevantly, Fix 1's forceContextLoss()
+      // not applying retroactively to contexts that were *already* evicted
+      // by the browser's hard cap on simultaneous contexts before this fix
+      // shipped, but also a GPU driver reset or the OS suspending the app.
+      // Without this listener, a lost context leaves this card's canvas
+      // permanently blank with no error and no recovery. Route it through
+      // the exact same onError fallback already used for parse/geometry
+      // failures, so the card falls back to the static thumbnail/icon
+      // instead of staying blank forever.
+      handleContextLost = (event: Event) => {
+        console.error(
+          `WebGL context lost for hover preview of model ${model.id}`,
+        );
+        if (frameId !== null) {
+          cancelAnimationFrame(frameId);
+          frameId = null;
+        }
+        if (!disposed) onErrorRef.current();
+      };
+      renderer.domElement.addEventListener(
+        "webglcontextlost",
+        handleContextLost,
+      );
+
       function animate() {
         if (disposed || !renderer) return;
         object.rotation.y += 0.01;
@@ -205,7 +231,20 @@ const HoverPreviewCanvas: React.FC<{
       if (frameId !== null) cancelAnimationFrame(frameId);
       if (liveObject) disposeObject3D(liveObject);
       if (renderer) {
+        if (handleContextLost) {
+          renderer.domElement.removeEventListener(
+            "webglcontextlost",
+            handleContextLost,
+          );
+        }
         renderer.dispose();
+        // See thumbnailGenerator.ts's renderObjectToDataUrl for why this is
+        // required in addition to dispose(): without it, a hover preview
+        // that mounts/unmounts repeatedly as the user moves across cards
+        // leaks a live WebGL context on every unmount, contributing to the
+        // same context-cap eviction problem as the background thumbnail
+        // loop.
+        renderer.forceContextLoss();
         renderer.domElement.remove();
       }
     };
