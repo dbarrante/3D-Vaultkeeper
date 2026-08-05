@@ -3,6 +3,7 @@ import {
   Check,
   ChevronLeft,
   EthernetPort,
+  Globe,
   KeyRound,
   Sparkles,
   Wrench,
@@ -36,6 +37,8 @@ const Settings: React.FC<SettingsProps> = ({ onBack }) => {
   const [makerWorldTokenStatus, setMakerWorldTokenStatus] = useState<
     "idle" | "saved" | "cleared" | "error"
   >("idle");
+  const [showMakerWorldTokenHelp, setShowMakerWorldTokenHelp] =
+    useState(false);
   const [openRouterKeyConfigured, setOpenRouterKeyConfigured] =
     useState(false);
   const [openRouterKey, setOpenRouterKey] = useState("");
@@ -217,68 +220,140 @@ const Settings: React.FC<SettingsProps> = ({ onBack }) => {
           </div>
         </div>
 
-        {/* MakerWorld Settings */}
+        {/* Import Sources */}
         <div className="mb-8">
           <div className="flex items-center gap-2 mb-4">
-            <KeyRound className="w-5 h-5 text-blue-400" />
-            <h3 className="text-lg font-semibold text-white">MakerWorld</h3>
+            <Globe className="w-5 h-5 text-blue-400" />
+            <h3 className="text-lg font-semibold text-white">
+              Import Sources
+            </h3>
           </div>
           <p className="text-sm text-slate-400 mb-4">
-            Add a Bambu Cloud token to enable MakerWorld 3MF downloads.
+            Paste a project URL from any of these into "Import URL" to
+            download and group its files automatically.
           </p>
-          <form onSubmit={handleMakerWorldTokenSubmit}>
-            <div className="grid grid-cols-1 sm:grid-cols-[1fr_auto] gap-3">
-              <input
-                type="password"
-                className="w-full bg-vault-900 border border-vault-700 rounded-md px-3 py-2 text-white focus:border-indigo-500 outline-none placeholder:text-slate-600"
-                placeholder={
-                  makerWorldTokenConfigured
-                    ? "Token configured; paste a new token to replace it"
-                    : "Paste MakerWorld token"
-                }
-                value={makerWorldToken}
-                onChange={(e) => {
-                  setMakerWorldToken(e.target.value);
-                  setMakerWorldTokenStatus("idle");
-                }}
-              />
-              <button
-                type="submit"
-                disabled={!makerWorldToken.trim()}
-                className="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                Save
-              </button>
+
+          <div className="space-y-3">
+            <div className="p-4 bg-vault-800 rounded-lg border border-vault-700 flex items-center justify-between">
+              <span className="text-sm font-medium text-slate-200">
+                Printables
+              </span>
+              <span className="text-xs text-green-400">No setup needed</span>
             </div>
-          </form>
-          <div className="mt-3 flex flex-wrap items-center gap-3">
-            <span
-              className={`text-xs ${
-                makerWorldTokenConfigured ? "text-green-400" : "text-amber-400"
-              }`}
-            >
-              {makerWorldTokenConfigured
-                ? "Token configured"
-                : "Token not configured"}
-            </span>
-            {makerWorldTokenConfigured && (
-              <button
-                type="button"
-                onClick={handleMakerWorldTokenClear}
-                className="text-xs text-slate-400 hover:text-white underline"
-              >
-                Clear token
-              </button>
-            )}
-            {makerWorldTokenStatus === "saved" && (
-              <span className="text-xs text-green-400">Saved</span>
-            )}
-            {makerWorldTokenStatus === "cleared" && (
-              <span className="text-xs text-amber-400">Cleared</span>
-            )}
-            {makerWorldTokenStatus === "error" && (
-              <span className="text-xs text-red-400">Update failed</span>
-            )}
+
+            <div className="p-4 bg-vault-800 rounded-lg border border-vault-700">
+              <div className="flex items-center gap-2 mb-1">
+                <KeyRound className="w-4 h-4 text-blue-400" />
+                <span className="text-sm font-medium text-slate-200">
+                  MakerWorld
+                </span>
+              </div>
+              <p className="text-sm text-slate-400 mb-3">
+                Add a Bambu Cloud token to enable MakerWorld 3MF downloads.
+              </p>
+              <form onSubmit={handleMakerWorldTokenSubmit}>
+                <div className="grid grid-cols-1 sm:grid-cols-[1fr_auto] gap-3">
+                  <input
+                    type="password"
+                    className="w-full bg-vault-900 border border-vault-700 rounded-md px-3 py-2 text-white focus:border-indigo-500 outline-none placeholder:text-slate-600"
+                    placeholder={
+                      makerWorldTokenConfigured
+                        ? "Token configured; paste a new token to replace it"
+                        : "Paste MakerWorld token"
+                    }
+                    value={makerWorldToken}
+                    onChange={(e) => {
+                      setMakerWorldToken(e.target.value);
+                      setMakerWorldTokenStatus("idle");
+                    }}
+                  />
+                  <button
+                    type="submit"
+                    disabled={!makerWorldToken.trim()}
+                    className="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    Save
+                  </button>
+                </div>
+              </form>
+              <div className="mt-3 flex flex-wrap items-center gap-3">
+                <span
+                  className={`text-xs ${
+                    makerWorldTokenConfigured
+                      ? "text-green-400"
+                      : "text-amber-400"
+                  }`}
+                >
+                  {makerWorldTokenConfigured
+                    ? "Token configured"
+                    : "Token not configured"}
+                </span>
+                {makerWorldTokenConfigured && (
+                  <button
+                    type="button"
+                    onClick={handleMakerWorldTokenClear}
+                    className="text-xs text-slate-400 hover:text-white underline"
+                  >
+                    Clear token
+                  </button>
+                )}
+                {makerWorldTokenStatus === "saved" && (
+                  <span className="text-xs text-green-400">Saved</span>
+                )}
+                {makerWorldTokenStatus === "cleared" && (
+                  <span className="text-xs text-amber-400">Cleared</span>
+                )}
+                {makerWorldTokenStatus === "error" && (
+                  <span className="text-xs text-red-400">Update failed</span>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setShowMakerWorldTokenHelp((v) => !v)}
+                  className="text-xs text-indigo-400 hover:text-indigo-300 underline ml-auto"
+                >
+                  {showMakerWorldTokenHelp ? "Hide" : "How do I get this?"}
+                </button>
+              </div>
+              {showMakerWorldTokenHelp && (
+                <div className="mt-3 p-3 rounded-lg bg-vault-900 border border-vault-700 text-xs text-slate-400 space-y-2">
+                  <ol className="list-decimal list-inside space-y-1">
+                    <li>
+                      Open{" "}
+                      <a
+                        href="https://makerworld.com/en"
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-indigo-400 hover:text-indigo-300 underline"
+                      >
+                        makerworld.com
+                      </a>{" "}
+                      and sign in.
+                    </li>
+                    <li>Press F12 to open Developer Tools.</li>
+                    <li>
+                      Go to Application → Cookies (Chrome/Edge) or Storage →
+                      Cookies (Firefox), then select the makerworld.com
+                      domain.
+                    </li>
+                    <li>Find the row named "token" and copy its value.</li>
+                    <li>Paste it into the field above and click Save.</li>
+                  </ol>
+                  <p className="text-amber-400">
+                    Treat this token like a password — it grants full access
+                    to your Bambu account, not just downloads. It also
+                    expires roughly every 3 months and will need to be
+                    copied again the same way.
+                  </p>
+                </div>
+              )}
+            </div>
+
+            <div className="p-4 bg-vault-800 rounded-lg border border-vault-700 flex items-center justify-between">
+              <span className="text-sm font-medium text-slate-200">
+                Other sites (Thingiverse, etc.)
+              </span>
+              <span className="text-xs text-green-400">No setup needed</span>
+            </div>
           </div>
         </div>
 
