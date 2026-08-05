@@ -20,6 +20,7 @@ import {
   ThumbnailTransportError,
 } from "./services/thumbnailGenerator";
 import { api, resolveApiOrigin } from "./services/api";
+import { ImportCollisionError } from "./services/api";
 import {
   FolderInput,
   Tags,
@@ -37,6 +38,7 @@ import Snackbar, { SnackbarCloseReason } from "@mui/material/Snackbar";
 import { ThemeProvider, createTheme } from "@mui/material/styles";
 import CssBaseline from "@mui/material/CssBaseline";
 import Alert from "@mui/material/Alert";
+import TextField from "@mui/material/TextField";
 
 const App = () => {
   const isDesktop = useMediaQuery("(min-width: 1024px)", true);
@@ -91,6 +93,12 @@ const App = () => {
   );
   const [importUrl, setImportUrl] = useState("");
   const [importFolderId, setImportFolderId] = useState("");
+  const [importProjectTitle, setImportProjectTitle] = useState("");
+  const [importProjectDescription, setImportProjectDescription] = useState("");
+  const [importCollision, setImportCollision] = useState<{
+    existingFolderId: string;
+    existingFolderName: string;
+  } | null>(null);
   const port = resolveApiOrigin();
   // Delete Confirmation State
   const [deleteConfirmState, setDeleteConfirmState] = useState<{
@@ -603,15 +611,23 @@ const App = () => {
     if (!importUrl || !importFolderId) return;
 
     try {
-      const ModelOptions = await api.retrieveModelOptions(importUrl);
+      const result = await api.retrieveModelOptions(importUrl);
       const NewSet = new Set("");
-      ModelOptions.forEach((m) => {
-        if (!NewSet.has(m.folder)) {
+      result.files.forEach((m) => {
+        if (m.folder && !NewSet.has(m.folder)) {
           NewSet.add(m.folder);
         }
       });
       setFolderOptions(NewSet);
-      setModelsOptions(ModelOptions);
+      setModelsOptions(result.files);
+      setImportProjectTitle(
+        result.title ||
+          result.files[0]?.name.replace(/\.[^.]+$/, "") ||
+          "Imported Project",
+      );
+      setImportProjectDescription(result.description || "");
+      setSelectedOptions(new Set(result.files.map((m) => m.id)));
+      setImportCollision(null);
       setShowImportModal(false);
       setShowImportOptionsModal(true);
     } catch (error) {
@@ -631,48 +647,57 @@ const App = () => {
   };
 
   const handleUpdateSTEPThumbnail = async (newModel: STLModel) => {
-    let tbuff = await fetch(port + newModel.url).then((response) => {
-      return response;
-    });
-    let thumbnailBuffer = await tbuff.bytes().then((bytes) => {
-      return bytes;
-    });
+    const tbuff = await fetch(port + newModel.url);
+    const thumbnailBuffer = await tbuff.bytes();
     try {
-      let thumbnail = await generateThumbnail(
+      const thumbnail = await generateThumbnail(
         new File([thumbnailBuffer], newModel.name),
       );
-      let newerModel = await api.updateModel(newModel.id, {
-        thumbnail: thumbnail,
-      });
-      setModels((prev) => [newerModel, ...prev]);
+      const updated = await api.updateModel(newModel.id, { thumbnail });
+      setModels((prev) =>
+        prev.map((m) => (m.id === updated.id ? updated : m)),
+      );
     } catch (e) {
       console.warn("Thumbnail generation failed, uploading without thumbnail");
     }
   };
 
-  const handleImportChoice = async () => {
-    if (!importUrl || !importFolderId) return;
+  const handleImportChoice = async (resolution?: "reuse" | "createNew") => {
+    const filesToImport = modelsOptions.filter((m) => selectedOptions.has(m.id));
+    if (!importUrl || filesToImport.length === 0) return;
 
     setIsLoading(true);
     setShowImportOptionsModal(false);
-    setUploadQueue((prev) => prev + selectedOptions.size);
     try {
-      for (const model of modelsOptions) {
-        if (selectedOptions.has(model.id)) {
-          let newModel = await api.importModelFromId(
-            model.id,
-            model.name,
-            model.parentId,
-            model.previewPath,
-            importFolderId,
-            model.typeName,
-            model.source || "printables",
-          );
-          await handleUpdateSTEPThumbnail(newModel);
-          setUploadQueue((prev) => prev - 1);
-        }
+      const result = await api.importBatch({
+        source: filesToImport[0]?.source || "printables",
+        folderName: importProjectTitle,
+        description: importProjectDescription,
+        files: filesToImport,
+        folderResolution: resolution,
+      });
+      setModels((prev) => [...result.models, ...prev]);
+      setFolders((prev) => [...prev, result.folder]);
+      result.models.forEach((m) => {
+        handleUpdateSTEPThumbnail(m);
+      });
+      setImportCollision(null);
+      if (result.failed.length > 0) {
+        alert(
+          `Imported ${result.models.length} of ${filesToImport.length} file(s). Failed: ${result.failed
+            .map((f) => f.name)
+            .join(", ")}`,
+        );
       }
     } catch (error) {
+      if (error instanceof ImportCollisionError) {
+        setImportCollision({
+          existingFolderId: error.existingFolderId,
+          existingFolderName: error.existingFolderName,
+        });
+        setShowImportOptionsModal(true);
+        return;
+      }
       console.error("Import failed:", error);
       alert("Failed to import from URL");
     } finally {
@@ -1382,6 +1407,40 @@ const App = () => {
                       </button>
                     </div>
 
+                    <TextField
+                      fullWidth
+                      size="small"
+                      label="Project folder name"
+                      value={importProjectTitle}
+                      onChange={(e) => setImportProjectTitle(e.target.value)}
+                      sx={{ mb: 3 }}
+                    />
+
+                    {importCollision && (
+                      <div className="mb-4 p-3 rounded-lg bg-amber-900/30 border border-amber-700 text-sm text-amber-200">
+                        <p className="mb-2">
+                          A folder named "{importCollision.existingFolderName}"
+                          already exists.
+                        </p>
+                        <div className="flex gap-2">
+                          <button
+                            type="button"
+                            onClick={() => handleImportChoice("reuse")}
+                            className="px-3 py-1.5 text-xs rounded bg-vault-700 hover:bg-vault-600 text-white"
+                          >
+                            Add to existing folder
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleImportChoice("createNew")}
+                            className="px-3 py-1.5 text-xs rounded bg-vault-700 hover:bg-vault-600 text-white"
+                          >
+                            Create a new folder anyway
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
                     {/* File List */}
                     <div
                       className={`static overflow-auto px-2 ${
@@ -1435,13 +1494,15 @@ const App = () => {
                       ))}
                     </div>
 
-                    <div
-                      onClick={() => handleImportChoice()}
-                      className="static bottom-0 p-2 mt-4 cursor-pointer rounded-lg bg-vault-700 hover:bg-vault-600 text-slate-200 font-medium transition-colors text-center"
-                    >
-                      {" "}
-                      Import{" "}
-                    </div>
+                    {!importCollision && (
+                      <div
+                        onClick={() => handleImportChoice()}
+                        className="static bottom-0 p-2 mt-4 cursor-pointer rounded-lg bg-vault-700 hover:bg-vault-600 text-slate-200 font-medium transition-colors text-center"
+                      >
+                        {" "}
+                        Import{" "}
+                      </div>
+                    )}
                   </div>
                 </div>
               )}
