@@ -5,20 +5,25 @@ import json
 from fastapi import APIRouter, HTTPException
 
 from app.db import get_db_conn, get_setting, now_ms, UPLOAD_DIR
-from app.importers import makerworld, printables
+from app.importers import generic, makerworld, printables
 
 router = APIRouter()
 
 
 def importer_for_url(url: str):
-    if "makerworld.com" in url.lower():
+    lowered = url.lower()
+    if "makerworld.com" in lowered:
         return makerworld.MakerWorldImporter(), "makerworld"
-    return printables.PrintablesImporter(), "printables"
+    if "printables.com" in lowered:
+        return printables.PrintablesImporter(), "printables"
+    return generic.GenericImporter(), "generic"
 
 
 def importer_for_source(source: str):
     if source == "makerworld":
         return makerworld.MakerWorldImporter(get_setting("makerworld_bambu_token")), "MakerWorld"
+    if source == "generic":
+        return generic.GenericImporter(), "Web"
     return printables.PrintablesImporter(), "Printables"
 
 

@@ -91,3 +91,14 @@ def test_import_options_errors_when_no_files_found(client):
     with patch("app.routers.importers.printables.PrintablesImporter", return_value=_EmptyImporter()):
         response = client.post("/api/import/options", json={"url": "https://www.printables.com/model/1-x"})
     assert response.status_code == 400
+
+
+def test_import_options_uses_generic_importer_for_unknown_site(client):
+    class _FakeGenericImporter:
+        def getModelOptions(self, url):
+            return {"title": "A Thing", "description": "desc", "files": [{"id": "x", "name": "x.stl"}]}
+
+    with patch("app.routers.importers.generic.GenericImporter", return_value=_FakeGenericImporter()):
+        response = client.post("/api/import/options", json={"url": "https://www.thingiverse.com/thing:12345"})
+    assert response.status_code == 200
+    assert response.json()["title"] == "A Thing"
