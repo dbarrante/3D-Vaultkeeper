@@ -230,8 +230,8 @@ def rewrite_tracked_folder_paths(dir_path: str, new_dir_path: str) -> None:
     """
     old_prefix = os.path.normpath(dir_path)
     conn = get_db_conn()
-    cur = conn.cursor()
     try:
+        cur = conn.cursor()
         for old_path in find_affected_tracked_folders(dir_path):
             rel = os.path.relpath(old_path, old_prefix)
             new_path = (
@@ -239,6 +239,18 @@ def rewrite_tracked_folder_paths(dir_path: str, new_dir_path: str) -> None:
                 if rel != "."
                 else os.path.normpath(new_dir_path)
             )
+            # A stale row can already occupy new_path -- e.g. its directory
+            # was removed by something other than delete_folder (manual
+            # filesystem deletion, external interference), leaving the
+            # tracked-folder row behind with nothing on disk. The real
+            # directory now being moved to new_path is about to occupy that
+            # exact location, so any pre-existing row there no longer refers
+            # to anything real and must be cleared before the UPDATE below,
+            # or the UPDATE fails on the path column's primary key with an
+            # unhandled sqlite3.IntegrityError -- even though the physical
+            # shutil.move in rename_folder/move_folder already succeeded,
+            # leaving the DB genuinely desynced from disk.
+            cur.execute("DELETE FROM file_view_tracked_folders WHERE path=?", (new_path,))
             cur.execute(
                 "UPDATE file_view_tracked_folders SET path=? WHERE path=?",
                 (new_path, old_path),

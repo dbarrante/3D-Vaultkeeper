@@ -1010,3 +1010,115 @@ def test_create_folder_normalizes_parent_path_with_dotdot_segment(client, tmp_pa
     conn.close()
     assert old_row is None
     assert new_row is not None
+
+
+def test_rename_onto_stale_tracked_row_does_not_crash(client, tmp_path):
+    """A tracked-folder row can go stale if its directory is removed by
+    something other than delete_folder (manual filesystem deletion, external
+    interference) -- delete_folder already prunes its own tracked rows
+    correctly, so it can't reproduce this; only bypassing the API with a raw
+    shutil.rmtree can.
+
+    If a later rename/move's destination happens to land exactly on that
+    stale row's path, rewrite_tracked_folder_paths's UPDATE would previously
+    hit the path column's primary key (still occupied by the stale row) and
+    raise an unhandled sqlite3.IntegrityError -- AFTER shutil.move had
+    already physically relocated the directory, leaving the DB genuinely
+    desynced from disk (a stale "Armor" row surviving, the "Tanks" row never
+    updated) even though the real directory really is at the new location.
+    """
+    import shutil as shutil_module
+    from app.db import get_db_conn
+
+    upload_dir = Path(os.environ["FILE_STORAGE"])
+
+    # Create "Armor", then remove its directory directly (bypassing the API)
+    # so its tracked row goes stale.
+    resp = client.post("/api/file-view/folder", json={"parentPath": None, "name": "Armor"})
+    assert resp.status_code == 200
+    armor_path = Path(resp.json()["path"])
+    shutil_module.rmtree(armor_path)
+    assert not armor_path.exists()
+
+    conn = get_db_conn()
+    stale_row = conn.execute(
+        "SELECT path FROM file_view_tracked_folders WHERE path=?", (str(armor_path),)
+    ).fetchone()
+    conn.close()
+    assert stale_row is not None, "setup check: the row must still be stale-present in the DB"
+
+    # Create a second, real tracked folder and rename it onto the stale row's path.
+    resp = client.post("/api/file-view/folder", json={"parentPath": None, "name": "Tanks"})
+    assert resp.status_code == 200
+    tanks_path = resp.json()["path"]
+
+    resp = client.post("/api/file-view/folder/rename", json={"path": tanks_path, "newName": "Armor"})
+    assert resp.status_code == 200, f"must not 500 on a stale-row collision, got {resp.status_code}: {resp.text}"
+
+    # The destination's tracked row must reflect the just-renamed folder, and
+    # the old "Tanks" row must be gone -- not a leftover stale duplicate.
+    conn = get_db_conn()
+    tanks_row = conn.execute(
+        "SELECT path FROM file_view_tracked_folders WHERE path=?", (tanks_path,)
+    ).fetchone()
+    armor_row = conn.execute(
+        "SELECT path FROM file_view_tracked_folders WHERE path=?", (str(armor_path),)
+    ).fetchone()
+    count = conn.execute(
+        "SELECT COUNT(*) c FROM file_view_tracked_folders WHERE path=?", (str(armor_path),)
+    ).fetchone()["c"]
+    conn.close()
+    assert tanks_row is None
+    assert armor_row is not None
+    assert count == 1, "must not leave a duplicate row at the destination path"
+    assert armor_path.is_dir()
+
+
+def test_delete_folder_removes_tracked_folder_at_its_own_exact_path(client, tmp_path):
+    """The existing delete tests only cover deleting an ANCESTOR of a tracked
+    folder. This covers deleting the tracked folder's own exact path.
+    """
+    from app.db import get_db_conn
+    upload_dir = Path(os.environ["FILE_STORAGE"])
+
+    resp = client.post("/api/file-view/folder", json={"parentPath": None, "name": "Tanks"})
+    assert resp.status_code == 200
+    tracked_path = resp.json()["path"]
+
+    resp = client.request("DELETE", "/api/file-view/folder", json={"path": tracked_path})
+    assert resp.status_code == 200
+
+    conn = get_db_conn()
+    row = conn.execute(
+        "SELECT path FROM file_view_tracked_folders WHERE path=?", (tracked_path,)
+    ).fetchone()
+    conn.close()
+    assert row is None
+
+
+def test_tracked_folder_with_sibling_prefix_name_is_not_falsely_matched(client, tmp_path):
+    """find_affected_tracked_folders/rewrite_tracked_folder_paths filter in
+    Python on a normalized-prefix-plus-os.sep basis specifically so that
+    renaming "Tanks" doesn't also sweep up a sibling like "TanksAndTrucks"
+    (a naive string.startswith(prefix) without the os.sep would). Confirms
+    that guarantee holds for tracked folders, not just for models.
+    """
+    from app.db import get_db_conn
+    upload_dir = Path(os.environ["FILE_STORAGE"])
+
+    resp = client.post("/api/file-view/folder", json={"parentPath": None, "name": "Tanks"})
+    assert resp.status_code == 200
+    resp = client.post("/api/file-view/folder", json={"parentPath": None, "name": "TanksAndTrucks"})
+    assert resp.status_code == 200
+    sibling_path = resp.json()["path"]
+
+    resp = client.post("/api/file-view/folder/rename", json={"path": str(upload_dir / "Tanks"), "newName": "Armor"})
+    assert resp.status_code == 200
+
+    conn = get_db_conn()
+    sibling_row = conn.execute(
+        "SELECT path FROM file_view_tracked_folders WHERE path=?", (sibling_path,)
+    ).fetchone()
+    conn.close()
+    assert sibling_row is not None, "the sibling's tracked row must be untouched, not renamed alongside it"
+    assert Path(sibling_path).is_dir()
