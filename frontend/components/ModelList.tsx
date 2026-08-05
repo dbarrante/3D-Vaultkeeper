@@ -16,6 +16,7 @@ import {
   ChevronLeft,
   BookOpen,
   Link2,
+  Info,
 } from "lucide-react";
 import { STLModel, Folder } from "../types";
 import {
@@ -660,6 +661,19 @@ const ModelList: React.FC<ModelListProps> = ({
                                 : "Folder"}
                             </Typography>
                           </Stack>
+                          {folder.description && (
+                            <Tooltip title={folder.description} placement="top">
+                              <IconButton
+                                size="small"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                }}
+                                sx={{ ml: "auto" }}
+                              >
+                                <Info className="w-4 h-4 text-slate-400" />
+                              </IconButton>
+                            </Tooltip>
+                          )}
                         </Stack>
                       </CardContent>
                     </CardActionArea>
