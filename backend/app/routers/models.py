@@ -69,6 +69,30 @@ def get_models(folderId: Optional[str] = None):
     return [row_to_model(r) for r in rows]
 
 
+@router.get("/api/models/thumbnail-queue")
+def get_thumbnail_queue(limit: int = 1):
+    conn = get_db_conn()
+    cur = conn.cursor()
+    rows = cur.execute(
+        """
+        SELECT * FROM models
+        WHERE removedAt IS NULL
+          AND thumbnail IS NULL
+          AND (thumbnailFailed IS NULL OR thumbnailFailed = 0)
+          AND (
+                LOWER(name) LIKE '%.stl'
+             OR LOWER(name) LIKE '%.3mf'
+             OR LOWER(name) LIKE '%.step'
+             OR LOWER(name) LIKE '%.stp'
+          )
+        LIMIT ?
+        """,
+        (limit,),
+    ).fetchall()
+    conn.close()
+    return [row_to_model(r) for r in rows]
+
+
 @router.post("/api/models/upload")
 def upload_model(
     file: UploadFile = File(...),
@@ -104,7 +128,7 @@ def update_model(model_id: str, updates: dict):
         conn.close()
         raise HTTPException(status_code=404, detail="Model not found")
 
-    allowed = ["name", "folderId", "tags", "description", "thumbnail", "author", "sourceUrl", "category", "colorCount", "sliceSettings"]
+    allowed = ["name", "folderId", "tags", "description", "thumbnail", "author", "sourceUrl", "category", "colorCount", "sliceSettings", "thumbnailFailed"]
     fields, values = [], []
     for k in allowed:
         if k in updates:

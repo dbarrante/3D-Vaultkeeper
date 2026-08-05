@@ -286,3 +286,52 @@ def test_delete_subdirectory_model_removes_the_actual_file(client, tmp_path):
 
     listed = client.get("/api/models", params={"folderId": "1"}).json()
     assert all(m["id"] != model["id"] for m in listed)
+
+
+def test_thumbnail_queue_returns_models_missing_thumbnail(client):
+    _upload(client, name="needs_thumb.stl")
+    resp = client.get("/api/models/thumbnail-queue")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert len(body) == 1
+    assert body[0]["name"] == "needs_thumb.stl"
+    assert body[0]["thumbnail"] is None
+
+
+def test_thumbnail_queue_excludes_models_with_a_thumbnail(client):
+    model = _upload(client, name="has_thumb.stl")
+    client.patch(f"/api/models/{model['id']}", json={"thumbnail": "data:image/png;base64,fake"})
+    resp = client.get("/api/models/thumbnail-queue")
+    assert resp.status_code == 200
+    assert resp.json() == []
+
+
+def test_thumbnail_queue_excludes_permanently_failed_models(client):
+    model = _upload(client, name="broken.stl")
+    client.patch(f"/api/models/{model['id']}", json={"thumbnailFailed": True})
+    resp = client.get("/api/models/thumbnail-queue")
+    assert resp.status_code == 200
+    assert resp.json() == []
+
+
+def test_thumbnail_queue_excludes_unsupported_extensions(client):
+    _upload(client, name="notes.pdf")
+    resp = client.get("/api/models/thumbnail-queue")
+    assert resp.status_code == 200
+    assert resp.json() == []
+
+
+def test_thumbnail_queue_respects_limit(client):
+    _upload(client, name="a.stl")
+    _upload(client, name="b.stl")
+    _upload(client, name="c.stl")
+    resp = client.get("/api/models/thumbnail-queue?limit=2")
+    assert resp.status_code == 200
+    assert len(resp.json()) == 2
+
+
+def test_update_model_can_set_thumbnail_failed(client):
+    model = _upload(client, name="fails_to_render.stl")
+    resp = client.patch(f"/api/models/{model['id']}", json={"thumbnailFailed": True})
+    assert resp.status_code == 200
+    assert resp.json()["thumbnailFailed"] is True

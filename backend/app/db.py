@@ -106,6 +106,7 @@ def init_db() -> None:
         ("storageMode", "TEXT NOT NULL DEFAULT 'copy'"),
         ("removedAt", "INTEGER"),
         ("filePath", "TEXT"),
+        ("thumbnailFailed", "INTEGER"),
     ]:
         try:
             cur.execute(f"ALTER TABLE models ADD COLUMN {column} {coltype}")
@@ -230,6 +231,7 @@ def row_to_model(row: sqlite3.Row) -> Dict[str, Any]:
         "storageMode": storage_mode,
         "filePath": file_path,
         "missing": missing,
+        "thumbnailFailed": bool(row["thumbnailFailed"]) if "thumbnailFailed" in row.keys() and row["thumbnailFailed"] else False,
     }
 
 
