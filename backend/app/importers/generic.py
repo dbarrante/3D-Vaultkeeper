@@ -6,6 +6,14 @@ from bs4 import BeautifulSoup
 
 FILE_EXTENSIONS = (".stl", ".3mf", ".step", ".stp", ".zip")
 
+# Content-type families that are never legitimate 3D-file downloads. This is a
+# denylist, not an allowlist: real servers commonly serve legitimate binary
+# downloads (including real STL/3MF files) as generic "application/octet-stream"
+# or with a missing/misconfigured Content-Type, so anything not matched here is
+# still accepted rather than rejected.
+REJECTED_CONTENT_TYPE_PREFIXES = ("text/", "image/", "video/", "audio/")
+REJECTED_CONTENT_TYPES = ("application/pdf", "application/json")
+
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36"
@@ -83,13 +91,18 @@ class GenericImporter:
             file = session.get(fileUrl, headers={"User-Agent": USER_AGENT}, allow_redirects=True, timeout=120)
             file.raise_for_status()
             # A link that merely *looks* like a file (or a "/download" path that
-            # redirects to a landing page) otherwise gets saved verbatim as a
-            # corrupt .stl. Raising here lets the batch endpoint report it.
+            # redirects to a landing page, or -- since "/download" matching was
+            # broadened to extensionless paths -- an unrelated asset that simply
+            # has "download" somewhere in its path, e.g. a preview image under a
+            # "/download/" directory) otherwise gets saved verbatim as a corrupt
+            # .stl. Raising here lets the batch endpoint report it.
             content_type = file.headers.get("Content-Type", "").lower()
-            if "text/html" in content_type or "text/plain" in content_type:
+            if content_type.startswith(REJECTED_CONTENT_TYPE_PREFIXES) or content_type.startswith(
+                REJECTED_CONTENT_TYPES
+            ):
                 raise ValueError(
                     f"Expected a 3D file but got {content_type or 'unknown content type'} "
-                    "-- likely a landing page, not a direct download link"
+                    "-- likely not a direct download link"
                 )
             return file, ""
         finally:

@@ -93,6 +93,57 @@ def test_generic_importer_download_rejects_plain_text_response():
             GenericImporter().importfromId("https://example.com/files/a.stl", None, "")
 
 
+def test_generic_importer_download_rejects_image_response():
+    """The gap this fix closes: a link that merely has "download" in its path
+    (e.g. an asset nested under a /download/ directory, discovered as a file
+    candidate by the broadened /download matching) but actually serves an
+    image must not be saved as a fake .stl."""
+    fake_response = MagicMock()
+    fake_response.content = b"\xff\xd8\xff\xe0JFIF fake jpeg bytes"
+    fake_response.headers = {"Content-Type": "image/jpeg"}
+    fake_response.raise_for_status = lambda: None
+
+    with patch("app.importers.generic.requests.Session.get", return_value=fake_response):
+        with pytest.raises(ValueError) as excinfo:
+            GenericImporter().importfromId(
+                "https://example.com/gallery/download/thumb-preview.jpg", None, ""
+            )
+
+    assert "image/jpeg" in str(excinfo.value)
+
+
+def test_generic_importer_download_rejects_pdf_response():
+    fake_response = MagicMock()
+    fake_response.content = b"%PDF-1.4 fake pdf bytes"
+    fake_response.headers = {"Content-Type": "application/pdf"}
+    fake_response.raise_for_status = lambda: None
+
+    with patch("app.importers.generic.requests.Session.get", return_value=fake_response):
+        with pytest.raises(ValueError):
+            GenericImporter().importfromId(
+                "https://example.com/download/instructions.pdf", None, ""
+            )
+
+
+def test_generic_importer_download_accepts_octet_stream_response():
+    """A generic/unrecognized content type -- how many real servers serve real
+    binary downloads, including legitimate STL/3MF files -- must still be
+    accepted. This guards against the broadened denylist becoming a de facto
+    allowlist that rejects real files."""
+    fake_response = MagicMock()
+    fake_response.content = b"solid fake endsolid"
+    fake_response.headers = {"Content-Type": "application/octet-stream"}
+    fake_response.raise_for_status = lambda: None
+
+    with patch("app.importers.generic.requests.Session.get", return_value=fake_response):
+        file, thumbnail = GenericImporter().importfromId(
+            "https://example.com/download/robot-body.stl", None, ""
+        )
+
+    assert file.content == b"solid fake endsolid"
+    assert thumbnail == ""
+
+
 THINGIVERSE_SHAPED_HTML = """
 <html>
 <head>
