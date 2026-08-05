@@ -812,3 +812,120 @@ def test_create_folder_delete_recreate_sequence_succeeds(client, tmp_path):
     ).fetchone()
     conn.close()
     assert row is not None
+
+
+def test_rename_folder_updates_tracked_child(client, tmp_path):
+    from app.db import get_db_conn
+    upload_dir = Path(os.environ["FILE_STORAGE"])
+    parent = upload_dir / "Vehicles"
+    parent.mkdir()
+
+    resp = client.post("/api/file-view/folder", json={"parentPath": str(parent), "name": "Tanks"})
+    tracked_path = resp.json()["path"]
+
+    resp = client.post("/api/file-view/folder/rename", json={"path": str(parent), "newName": "Cars"})
+    assert resp.status_code == 200
+
+    conn = get_db_conn()
+    old_row = conn.execute(
+        "SELECT path FROM file_view_tracked_folders WHERE path=?", (tracked_path,)
+    ).fetchone()
+    new_expected = str(upload_dir / "Cars" / "Tanks")
+    new_row = conn.execute(
+        "SELECT path FROM file_view_tracked_folders WHERE path=?", (new_expected,)
+    ).fetchone()
+    conn.close()
+    assert old_row is None
+    assert new_row is not None
+    assert Path(new_expected).is_dir()
+
+
+def test_move_folder_updates_tracked_descendant(client, tmp_path):
+    from app.db import get_db_conn
+    upload_dir = Path(os.environ["FILE_STORAGE"])
+    source = upload_dir / "Tanks"
+    source.mkdir()
+    (upload_dir / "Archive").mkdir()
+
+    resp = client.post("/api/file-view/folder", json={"parentPath": str(source), "name": "Old"})
+    tracked_path = resp.json()["path"]
+
+    target = str(upload_dir / "Archive" / "Tanks")
+    resp = client.post("/api/file-view/folder/move", json={"sourcePath": str(source), "targetPath": target})
+    assert resp.status_code == 200
+
+    conn = get_db_conn()
+    old_row = conn.execute(
+        "SELECT path FROM file_view_tracked_folders WHERE path=?", (tracked_path,)
+    ).fetchone()
+    new_expected = str(Path(target) / "Old")
+    new_row = conn.execute(
+        "SELECT path FROM file_view_tracked_folders WHERE path=?", (new_expected,)
+    ).fetchone()
+    conn.close()
+    assert old_row is None
+    assert new_row is not None
+
+
+def test_delete_folder_removes_tracked_descendant(client, tmp_path):
+    from app.db import get_db_conn
+    upload_dir = Path(os.environ["FILE_STORAGE"])
+    parent = upload_dir / "Vehicles"
+    parent.mkdir()
+
+    resp = client.post("/api/file-view/folder", json={"parentPath": str(parent), "name": "Empty"})
+    tracked_path = resp.json()["path"]
+
+    resp = client.request("DELETE", "/api/file-view/folder", json={"path": str(parent)})
+    assert resp.status_code == 200
+
+    conn = get_db_conn()
+    row = conn.execute(
+        "SELECT path FROM file_view_tracked_folders WHERE path=?", (tracked_path,)
+    ).fetchone()
+    conn.close()
+    assert row is None
+    assert not Path(tracked_path).exists()
+
+
+def test_tracked_folder_survives_being_emptied_out(client, tmp_path):
+    """The exact behavior the spec's Goals section exists to guarantee: a
+    tracked folder must NOT be pruned just because it (temporarily) has a
+    model in it and then doesn't. Easy to get wrong by adding 'helpful'
+    pruning logic that isn't wanted.
+    """
+    from app.db import get_db_conn
+    upload_dir = Path(os.environ["FILE_STORAGE"])
+    parent = upload_dir / "Vehicles"
+    parent.mkdir()
+
+    resp = client.post("/api/file-view/folder", json={"parentPath": str(parent), "name": "Tanks"})
+    tracked_path = resp.json()["path"]
+    tracked_dir = Path(tracked_path)
+
+    # A model "lands" in the tracked folder.
+    model_file = tracked_dir / "abc123.stl"
+    model_file.write_text("model data")
+    conn = get_db_conn()
+    _insert_folder(conn, "f1", "Root")
+    _insert_model(conn, "abc123", "f1", str(model_file), storage_mode="copy")
+    conn.commit()
+    conn.close()
+
+    # Confirm the tracked row is still present with a model now inside it.
+    resp = client.get("/api/file-view/tracked-folders")
+    assert tracked_path in resp.json()["paths"]
+
+    # Move the model back out.
+    other_dir = upload_dir / "Elsewhere"
+    other_dir.mkdir()
+    resp = client.patch(
+        "/api/models/abc123/location",
+        json={"newPath": str(other_dir / "abc123.stl")},
+    )
+    assert resp.status_code == 200
+
+    # The tracked folder must still be reported -- it was never pruned.
+    resp = client.get("/api/file-view/tracked-folders")
+    assert tracked_path in resp.json()["paths"]
+    assert tracked_dir.is_dir()

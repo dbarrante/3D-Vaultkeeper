@@ -198,3 +198,51 @@ def rewrite_affected_paths(dir_path: str, new_dir_path: str) -> None:
         conn.commit()
     finally:
         conn.close()
+
+
+def find_affected_tracked_folders(dir_path: str) -> list:
+    """Every tracked-folder path at or under dir_path. Mirrors
+    find_affected_models's Python-side prefix filtering (not SQL LIKE) to
+    avoid needing to escape "%"/"_" wildcard characters that can legally
+    appear in a real folder name.
+    """
+    conn = get_db_conn()
+    try:
+        rows = conn.execute("SELECT path FROM file_view_tracked_folders").fetchall()
+    finally:
+        conn.close()
+    prefix = os.path.normpath(dir_path)
+    affected = []
+    for row in rows:
+        norm = os.path.normpath(row["path"])
+        if norm == prefix or norm.startswith(prefix + os.sep):
+            affected.append(norm)
+    return affected
+
+
+def rewrite_tracked_folder_paths(dir_path: str, new_dir_path: str) -> None:
+    """After dir_path has already been physically moved/renamed to
+    new_dir_path on disk, update every tracked-folder row at or under it to
+    match -- same purpose as rewrite_affected_paths, applied to
+    file_view_tracked_folders instead of models. Call this immediately
+    after the physical move, passing the OLD dir_path so
+    find_affected_tracked_folders still matches what's in the DB.
+    """
+    old_prefix = os.path.normpath(dir_path)
+    conn = get_db_conn()
+    cur = conn.cursor()
+    try:
+        for old_path in find_affected_tracked_folders(dir_path):
+            rel = os.path.relpath(old_path, old_prefix)
+            new_path = (
+                os.path.normpath(os.path.join(new_dir_path, rel))
+                if rel != "."
+                else os.path.normpath(new_dir_path)
+            )
+            cur.execute(
+                "UPDATE file_view_tracked_folders SET path=? WHERE path=?",
+                (new_path, old_path),
+            )
+        conn.commit()
+    finally:
+        conn.close()

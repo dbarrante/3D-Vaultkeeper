@@ -12,9 +12,11 @@ from app.services.file_view_ops import (
     is_self_nested_move,
     path_conflicts_with_watch_root,
     rewrite_affected_paths,
+    rewrite_tracked_folder_paths,
     resolve_storage_mode_for_path,
     validate_destination,
     find_affected_models,
+    find_affected_tracked_folders,
 )
 from app.services.import_wizard import sanitize_path_segment
 
@@ -61,6 +63,7 @@ def rename_folder(body: FolderRenameRequest):
         raise HTTPException(status_code=400, detail=WATCH_ROOT_CONFLICT_DETAIL.format(verb="rename"))
     shutil.move(str(source), str(destination))
     rewrite_affected_paths(str(source), str(destination))
+    rewrite_tracked_folder_paths(str(source), str(destination))
     return {"path": str(destination)}
 
 
@@ -95,6 +98,7 @@ def move_folder(body: FolderMoveRequest):
     destination.parent.mkdir(parents=True, exist_ok=True)
     shutil.move(str(source), str(destination))
     rewrite_affected_paths(str(source), str(destination))
+    rewrite_tracked_folder_paths(str(source), str(destination))
     return {"path": str(destination)}
 
 
@@ -159,6 +163,18 @@ def delete_folder(body: FolderDeleteRequest):
         conn.commit()
     finally:
         conn.close()
+
+    tracked = find_affected_tracked_folders(str(target))
+    if tracked:
+        conn = get_db_conn()
+        try:
+            conn.executemany(
+                "DELETE FROM file_view_tracked_folders WHERE path=?",
+                [(p,) for p in tracked],
+            )
+            conn.commit()
+        finally:
+            conn.close()
 
     try:
         shutil.rmtree(target)
