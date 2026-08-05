@@ -5,12 +5,18 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: windows-latest
     permissions:
       contents: write
     steps:
       - name: Checkout repo
         uses: actions/checkout@main
+        with:
+          # version-increment needs the full tag history to compute the
+          # next version correctly -- a shallow checkout (the default)
+          # can't see any existing tag, so it always starts over from
+          # v0.0.0 regardless of what's already been released.
+          fetch-depth: 0
 
       - name: Get next version
         uses: reecetech/version-increment@2024.10.1
@@ -18,10 +24,40 @@ jobs:
         with:
           scheme: conventional_commits
 
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Set up bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install Inno Setup
+        run: choco install innosetup --no-progress -y
+
+      - name: Create backend venv and install dependencies
+        run: |
+          python -m venv backend\.venv
+          backend\.venv\Scripts\python.exe -m pip install --upgrade pip
+          backend\.venv\Scripts\python.exe -m pip install -r backend\requirements.txt
+          backend\.venv\Scripts\python.exe -m pip install -r desktop\requirements.txt
+        shell: pwsh
+
+      - name: Build installer
+        run: .\desktop\build.ps1
+        shell: pwsh
+
       - name: Tag and Release
+        id: release
         uses: BrandonStudio/tag-and-release@v1
         with:
           tag_name: ${{ steps.version.outputs.v-version }}
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.PAT_TOKEN }}
+
+      - name: Upload installer to release
+        run: gh release upload "${{ steps.version.outputs.v-version }}" "desktop\installer_output\3DVaultkeeper-Setup.exe"
+        env:
+          GH_TOKEN: ${{ secrets.PAT_TOKEN }}
+        shell: pwsh
