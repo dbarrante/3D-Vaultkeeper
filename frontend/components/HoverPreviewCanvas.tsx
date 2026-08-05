@@ -87,9 +87,16 @@ const HoverPreviewCanvas: React.FC<{
         // so it is deliberately not used here even though it appears in the
         // brief's illustrative sample.
         object = await LoadStepFromFile(buffer);
+        // Same initial rotation thumbnailGenerator.ts's STEP branch applies,
+        // in the same place (right after load, before the bounding box is
+        // measured for camera framing below) -- see the STL branch's
+        // comment for why this placement matters.
+        object.rotation.y = 90;
+        object.rotation.z = -0.3;
       } else if (lower.endsWith(".3mf")) {
         const loader = new ThreeMFLoader();
         object = loader.parse(buffer);
+        // thumbnailGenerator.ts applies no initial rotation to 3MF objects.
       } else {
         const loader = new STLLoader();
         const geometry = loader.parse(buffer);
@@ -99,6 +106,16 @@ const HoverPreviewCanvas: React.FC<{
           metalness: 0.2,
         });
         object = new THREE.Mesh(geometry, material);
+        // Same initial rotation thumbnailGenerator.ts's STL branch applies.
+        // Placement matters: thumbnailGenerator.ts's camera distance
+        // (cameraZ = maxDim * 3.5) is derived from the world-space bounding
+        // box computed AFTER this rotation, so applying it here -- before
+        // the Box3().setFromObject() below -- keeps this preview's starting
+        // scale/framing consistent with the static thumbnail's. Applying it
+        // after framing (or not at all) would measure a different maxDim
+        // and produce a visible scale "pop" the instant the live preview
+        // takes over from the static thumbnail.
+        object.rotation.y = 0.3;
       }
 
       if (disposed || !mountRef.current) {
