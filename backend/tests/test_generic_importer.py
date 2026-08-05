@@ -198,3 +198,27 @@ def test_generic_importer_ignores_download_only_in_query_string():
         result = GenericImporter().getModelOptions("https://example.com/thing/9")
 
     assert [f["name"] for f in result["files"]] == ["robot.stl"]
+
+
+def test_generic_importer_raises_clear_message_on_bot_block():
+    """A 403 (or 503) on a plain page fetch is treated as the site's own
+    bot-protection (e.g. a Cloudflare challenge page) rather than a normal
+    HTTP error -- the resulting message should be specific and actionable,
+    not requests' generic "403 Client Error: Forbidden for url: ..." text."""
+    fake_response = MagicMock()
+    fake_response.status_code = 403
+
+    with patch("app.importers.generic.requests.Session.get", return_value=fake_response):
+        with pytest.raises(ValueError, match="appears to block automated downloads"):
+            GenericImporter().getModelOptions("https://cults3d.com/en/3d-model/example")
+
+
+def test_generic_importer_download_raises_clear_message_on_bot_block():
+    fake_response = MagicMock()
+    fake_response.status_code = 503
+
+    with patch("app.importers.generic.requests.Session.get", return_value=fake_response):
+        with pytest.raises(ValueError, match="appears to block automated downloads"):
+            GenericImporter().importfromId(
+                "https://cults3d.com/files/robot.stl", None, ""
+            )

@@ -19,6 +19,24 @@ USER_AGENT = (
     "(KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36"
 )
 
+# A 403/503 on a plain, unauthenticated page fetch is essentially always the
+# site's own bot-protection (Cloudflare and similar WAFs commonly respond
+# this way to a non-browser request) rather than something retrying or
+# reformatting the request can fix -- surfaced as a clear, specific error
+# instead of letting requests' generic "403 Client Error: Forbidden for
+# url: ..." message reach the user.
+BLOCKED_STATUS_CODES = (403, 503)
+
+
+def _raise_for_status_with_clear_message(response):
+    if response.status_code in BLOCKED_STATUS_CODES:
+        raise ValueError(
+            "This site appears to block automated downloads (it responded with "
+            f"HTTP {response.status_code}) -- it can't be imported this way. Try "
+            "downloading the files manually from the site instead."
+        )
+    response.raise_for_status()
+
 
 class GenericImporter:
     """Fallback importer for any site without a dedicated API-backed
@@ -33,7 +51,7 @@ class GenericImporter:
         session = requests.Session()
         try:
             response = session.get(url, headers={"User-Agent": USER_AGENT}, timeout=20)
-            response.raise_for_status()
+            _raise_for_status_with_clear_message(response)
             soup = BeautifulSoup(response.text, "html.parser")
 
             title = self._meta_property(soup, "og:title")
@@ -89,7 +107,7 @@ class GenericImporter:
         session = requests.Session()
         try:
             file = session.get(fileUrl, headers={"User-Agent": USER_AGENT}, allow_redirects=True, timeout=120)
-            file.raise_for_status()
+            _raise_for_status_with_clear_message(file)
             # A link that merely *looks* like a file (or a "/download" path that
             # redirects to a landing page, or -- since "/download" matching was
             # broadened to extensionless paths -- an unrelated asset that simply
