@@ -202,12 +202,15 @@ def create_folder(body: FolderCreateRequest):
     if new_dir.exists():
         raise HTTPException(status_code=409, detail=f"A folder already exists at {new_dir}")
 
-    new_dir.mkdir(parents=True)
+    try:
+        new_dir.mkdir()
+    except FileExistsError:
+        raise HTTPException(status_code=409, detail=f"A folder already exists at {new_dir}")
 
     conn = get_db_conn()
     try:
         conn.execute(
-            "INSERT INTO file_view_tracked_folders(path) VALUES (?)",
+            "INSERT OR REPLACE INTO file_view_tracked_folders(path) VALUES (?)",
             (str(new_dir),),
         )
         conn.commit()

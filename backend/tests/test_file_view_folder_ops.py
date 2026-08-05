@@ -772,3 +772,43 @@ def test_get_tracked_folders_returns_created_paths(client, tmp_path):
     paths = resp.json()["paths"]
     assert str(upload_dir / "Alpha") in paths
     assert str(upload_dir / "Beta") in paths
+
+
+def test_create_folder_delete_recreate_sequence_succeeds(client, tmp_path):
+    from app.db import get_db_conn
+    upload_dir = Path(os.environ["FILE_STORAGE"])
+
+    # Create folder "Reusable"
+    create_resp = client.post("/api/file-view/folder", json={"parentPath": None, "name": "Reusable"})
+    assert create_resp.status_code == 200
+    folder_path = Path(create_resp.json()["path"])
+    assert folder_path.is_dir()
+
+    # Verify it's tracked
+    conn = get_db_conn()
+    row = conn.execute(
+        "SELECT path FROM file_view_tracked_folders WHERE path=?", (str(folder_path),)
+    ).fetchone()
+    conn.close()
+    assert row is not None
+
+    # Delete the folder via the existing delete_folder endpoint
+    delete_resp = client.request("DELETE", "/api/file-view/folder", json={"path": str(folder_path)})
+    assert delete_resp.status_code == 200
+    assert not folder_path.exists()
+    # Note: delete_folder doesn't remove the tracked row yet (Task 2 will do that)
+
+    # Re-create the folder at the same path -- should succeed cleanly (200, not 500)
+    recreate_resp = client.post("/api/file-view/folder", json={"parentPath": None, "name": "Reusable"})
+    assert recreate_resp.status_code == 200
+    new_path = Path(recreate_resp.json()["path"])
+    assert new_path == folder_path
+    assert new_path.is_dir()
+
+    # Verify the stale row was replaced (INSERT OR REPLACE should have updated it)
+    conn = get_db_conn()
+    row = conn.execute(
+        "SELECT path FROM file_view_tracked_folders WHERE path=?", (str(new_path),)
+    ).fetchone()
+    conn.close()
+    assert row is not None
