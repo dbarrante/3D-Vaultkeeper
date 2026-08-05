@@ -330,6 +330,36 @@ def test_thumbnail_queue_respects_limit(client):
     assert len(resp.json()) == 2
 
 
+def test_thumbnail_queue_with_multiple_eligible_models_returns_a_valid_eligible_one(client):
+    # ORDER BY RANDOM() means which row comes back isn't deterministic, but
+    # every filter criterion (missing thumbnail, not permanently failed,
+    # supported extension) must still hold -- this guards against the
+    # ordering change accidentally loosening the existing WHERE clause.
+    # Not asserting on randomness itself, just that filtering still works
+    # and a single call still returns one genuinely eligible model.
+    eligible_ids = {
+        _upload(client, name=f"eligible_{i}.stl")["id"] for i in range(5)
+    }
+    ineligible_thumbnail = _upload(client, name="has_thumb.stl")
+    client.patch(
+        f"/api/models/{ineligible_thumbnail['id']}",
+        json={"thumbnail": "data:image/png;base64,fake"},
+    )
+    ineligible_failed = _upload(client, name="failed.stl")
+    client.patch(f"/api/models/{ineligible_failed['id']}", json={"thumbnailFailed": True})
+    _upload(client, name="unsupported.pdf")
+
+    resp = client.get("/api/models/thumbnail-queue?limit=1")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert len(body) == 1
+    returned = body[0]
+    assert returned["id"] in eligible_ids
+    assert returned["thumbnail"] is None
+    assert not returned["thumbnailFailed"]
+    assert returned["name"].lower().endswith((".stl", ".3mf", ".step", ".stp"))
+
+
 def test_update_model_can_set_thumbnail_failed(client):
     model = _upload(client, name="fails_to_render.stl")
     resp = client.patch(f"/api/models/{model['id']}", json={"thumbnailFailed": True})

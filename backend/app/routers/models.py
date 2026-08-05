@@ -85,6 +85,7 @@ def get_thumbnail_queue(limit: int = 1):
              OR LOWER(name) LIKE '%.step'
              OR LOWER(name) LIKE '%.stp'
           )
+        ORDER BY RANDOM()
         LIMIT ?
         """,
         (limit,),
