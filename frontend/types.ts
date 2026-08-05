@@ -15,6 +15,7 @@ export interface Folder {
   name: string;
   parentId: string | null;
   icon?: string;
+  description?: string | null;
 }
 
 export interface STLModel {
@@ -49,6 +50,23 @@ export interface STLModelCollection {
   folder: string | null;
   previewPath: string;
   typeName: string;
+}
+
+export interface ImportOptionsResult {
+  title: string;
+  description: string;
+  files: STLModelCollection[];
+}
+
+export interface ImportBatchFailure {
+  name: string;
+  error: string;
+}
+
+export interface ImportBatchResult {
+  folder: Folder;
+  models: STLModel[];
+  failed: ImportBatchFailure[];
 }
 
 export interface StorageStats {

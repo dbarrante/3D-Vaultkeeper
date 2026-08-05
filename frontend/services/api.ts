@@ -8,6 +8,8 @@ import {
   ImportTreeNode,
   ImportPlacement,
   ImportResult,
+  ImportOptionsResult,
+  ImportBatchResult,
 } from "../types";
 
 // The Docker image bakes VITE_API_URL as the literal placeholder token
@@ -105,6 +107,17 @@ export const setEnabledLaunchSlicers = (slicers: SlicerType[]) => {
   );
   localStorage.setItem("stlvault-slicer", enabled[0] || getSlicerPreference());
 };
+
+export class ImportCollisionError extends Error {
+  existingFolderId: string;
+  existingFolderName: string;
+  constructor(existingFolderId: string, existingFolderName: string) {
+    super("Folder name collision");
+    this.name = "ImportCollisionError";
+    this.existingFolderId = existingFolderId;
+    this.existingFolderName = existingFolderName;
+  }
+}
 
 export const api = {
   // 1. GET Folders
@@ -358,7 +371,7 @@ export const api = {
   },
 
   // 13. RETRIEVE MODEL OPTIONS
-  retrieveModelOptions: async (url: string): Promise<STLModelCollection[]> => {
+  retrieveModelOptions: async (url: string): Promise<ImportOptionsResult> => {
     const res = await fetch(`${getApiBaseUrl()}/import/options`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -412,6 +425,30 @@ export const api = {
         typeName,
       }),
     });
+    if (!res.ok) throw new Error("Import failed");
+    return res.json();
+  },
+
+  // 13b. IMPORT BATCH (grouped, folder-aware)
+  importBatch: async (params: {
+    source: string;
+    folderName: string;
+    description: string;
+    files: STLModelCollection[];
+    folderResolution?: "reuse" | "createNew";
+  }): Promise<ImportBatchResult> => {
+    const res = await fetch(`${getApiBaseUrl()}/import/batch`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(params),
+    });
+    if (res.status === 409) {
+      const body = await res.json();
+      throw new ImportCollisionError(
+        body.detail.existingFolderId,
+        body.detail.existingFolderName,
+      );
+    }
     if (!res.ok) throw new Error("Import failed");
     return res.json();
   },
