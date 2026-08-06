@@ -3,6 +3,7 @@ import * as THREE from "three";
 import { STLLoader } from "three/examples/jsm/loaders/STLLoader.js";
 import { ThreeMFLoader } from "three/examples/jsm/loaders/3MFLoader.js";
 import { loadStepGeometryFromBuffer } from "../lib/stepGeometry";
+import { HOVER_PREVIEW_MAX_BYTES } from "../lib/hoverPreviewConstants";
 
 type HoverWorkerRequest =
   | { type: "start"; sessionId: number; canvas: OffscreenCanvas; url: string; name: string }
@@ -225,6 +226,24 @@ async function handleStart(msg: Extract<HoverWorkerRequest, { type: "start" }>) 
     }
     const buffer = await response.arrayBuffer();
 
+    // Defense-in-depth against a stale/wrong model.size on the caller's
+    // side: HOVER_PREVIEW_MAX_BYTES is the same constant ModelList.tsx's
+    // isHoverPreviewEligible and HoverPreviewCanvas.tsx's own child-side
+    // gate both check BEFORE ever starting a session -- but this worker
+    // previously had no gate of its own, so it would happily parse whatever
+    // it was handed no matter how large. Checking the real fetched
+    // byte length here (not a caller-supplied size field that could be
+    // stale or wrong) is the last line of defense against ever re-
+    // introducing the main-thread-freeze class of bug this worker exists
+    // to prevent -- though in practice this parsing happens off the main
+    // thread already, so a file that slips past both main-thread gates
+    // would still only threaten to freeze the WORKER, not the page.
+    if (buffer.byteLength > HOVER_PREVIEW_MAX_BYTES) {
+      throw new Error(
+        `Model file too large for hover preview (${buffer.byteLength} bytes, max ${HOVER_PREVIEW_MAX_BYTES})`,
+      );
+    }
+
     // A cancel (or a newer start) may have arrived while the fetch/parse was
     // in flight -- don't render or report anything for a superseded session.
     if (currentSessionId !== msg.sessionId) return;
@@ -246,8 +265,15 @@ async function handleStart(msg: Extract<HoverWorkerRequest, { type: "start" }>) 
       sessionId: msg.sessionId,
       message: err instanceof Error ? err.message : String(err),
     };
-    stopCurrentSession();
+    // Null the session id BEFORE stopCurrentSession(), not after. Safe
+    // either way today only because forceContextLoss()'s webglcontextlost
+    // dispatch happens to be asynchronous (contextLostHandler's own
+    // `if (currentSessionId !== sessionId) return;` guard would otherwise
+    // race a synchronous dispatch against this cleanup) -- nulling first
+    // removes the dependency on that timing entirely rather than relying
+    // on it staying true.
     currentSessionId = null;
+    stopCurrentSession();
     (self as unknown as Worker).postMessage(response);
   }
 }
@@ -259,8 +285,10 @@ self.onmessage = (event: MessageEvent<HoverWorkerRequest>) => {
   } else {
     // cancel
     if (currentSessionId === msg.sessionId) {
-      stopCurrentSession();
+      // Same null-before-stop ordering as handleStart's catch block, for
+      // consistency and for the same reason -- see that comment.
       currentSessionId = null;
+      stopCurrentSession();
     }
   }
 };

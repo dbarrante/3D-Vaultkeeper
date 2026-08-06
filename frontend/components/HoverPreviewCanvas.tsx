@@ -6,15 +6,15 @@ import { STLModel } from "../types";
 import CardMedia from "@mui/material/CardMedia";
 import { FileBox } from "lucide-react";
 
-// Single source of truth for the size gate -- ModelList.tsx's
-// isHoverPreviewEligible imports this exact constant so the parent's
-// eligibility check and this component's own gate can never disagree.
-// 50MB: comfortably covers the vast majority of real print files (this
-// library's median file is 1.9MB) while excluding the rare multi-hundred-MB
-// outliers that measurably froze the main thread for 11+ seconds when
-// rendered synchronously (see docs/superpowers/specs/
-// 2026-08-06-hover-preview-worker-offload-design.md).
-export const HOVER_PREVIEW_MAX_BYTES = 50 * 1024 * 1024;
+// Declared in lib/hoverPreviewConstants.ts (not here) so hoverPreviewWorker.ts
+// -- a plain worker script, not a React component -- can import this same
+// constant for its own byte-length guard without pulling React into the
+// worker bundle. Imported here for this component's own child-side gate
+// below, and re-exported so ModelList.tsx's existing
+// `import HoverPreviewCanvas, { HOVER_PREVIEW_MAX_BYTES } from
+// "./HoverPreviewCanvas"` needs no change.
+import { HOVER_PREVIEW_MAX_BYTES } from "../lib/hoverPreviewConstants";
+export { HOVER_PREVIEW_MAX_BYTES };
 
 const HoverPreviewCanvas: React.FC<{
   model: STLModel;
@@ -31,7 +31,25 @@ const HoverPreviewCanvas: React.FC<{
 
   useEffect(() => {
     if (!mountRef.current) return;
+    // Reset unconditionally, before the size-gate check below -- if this
+    // effect is re-running because `model` changed while this component
+    // stayed mounted (e.g. a VirtuosoGrid slot recycle), a stale
+    // `ready === true` left over from the PREVIOUS model must not survive
+    // into a gated-out render for the new one, or the placeholder would
+    // stay hidden behind a `ready` state with no real canvas ever created.
     setReady(false);
+    // Defense-in-depth, not the primary gate: ModelList.tsx's
+    // isHoverPreviewEligible is what actually prevents this component from
+    // mounting for an over-threshold model in normal use (it gates BEFORE
+    // mounting at all). This check exists so that IF some future caller
+    // ever mounts HoverPreviewCanvas directly without going through that
+    // check, it still can't launch a live preview for a pathologically
+    // large file -- matching the exported HOVER_PREVIEW_MAX_BYTES comment's
+    // claim that the parent and this component "can never disagree."
+    if (model.size > HOVER_PREVIEW_MAX_BYTES) {
+      onErrorRef.current();
+      return;
+    }
     const el = mountRef.current;
 
     const canvas = document.createElement("canvas");
@@ -45,7 +63,10 @@ const HoverPreviewCanvas: React.FC<{
     // this card's non-square box, visibly distorting the render (spheres
     // render as ellipses).
     const width = el.clientWidth || 300;
-    const height = el.clientHeight || 300;
+    // 240, not 300 -- this container is always h-60 (240px), a fixed
+    // Tailwind height, unlike the width (w-full, genuinely variable across
+    // grid breakpoints, where 300 is just a reasonable arbitrary fallback).
+    const height = el.clientHeight || 240;
     // Buffer sized in device pixels (capped at 2x -- diminishing returns
     // for a 240px-tall preview beyond that, and keeps the transferred
     // buffer from ballooning on very-high-DPR displays), CSS box kept at

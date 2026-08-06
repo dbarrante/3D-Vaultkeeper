@@ -38,10 +38,23 @@ function getWorker(): Worker | null {
       const msg = event.data;
       const callbacks = activeCallbacks.get(msg.sessionId);
       if (!callbacks) return; // superseded/cancelled session, ignore
-      activeCallbacks.delete(msg.sessionId);
       if (msg.type === "ready") {
         callbacks.onReady();
+        // Deliberately NOT deleted here -- the session stays "active" after
+        // ready so a LATER error (webglcontextlost, forwarded from the
+        // worker's own contextLostHandler; or a worker-side crash mid-
+        // animation) can still reach this session's onError. Without this,
+        // "ready" always arrives first (synchronous, first-frame) and
+        // unconditionally deleting the map entry here meant any later
+        // error for the same session found the entry already gone and was
+        // silently dropped at the `if (!callbacks) return;` line above --
+        // defeating the whole point of hoverPreviewWorker.ts's
+        // contextLostHandler, which exists specifically so a lost context
+        // doesn't leave the canvas permanently blank with no error.
+        // Cleanup happens via cancel() (which already deletes the entry
+        // itself) or here, on an eventual error.
       } else {
+        activeCallbacks.delete(msg.sessionId);
         console.warn(`[hoverPreviewClient] Hover preview failed: ${msg.message}`);
         callbacks.onError();
       }

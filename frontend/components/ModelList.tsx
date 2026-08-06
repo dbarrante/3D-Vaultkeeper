@@ -190,10 +190,13 @@ const ModelList: React.FC<ModelListProps> = ({
   const hoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Same STL/3MF/STEP format restriction as the static-thumbnail generation,
-  // plus a size gate: HOVER_PREVIEW_MAX_BYTES (imported from
-  // HoverPreviewCanvas.tsx, the single source of truth) keeps pathologically
-  // large files from ever mounting a live preview -- see
-  // docs/superpowers/specs/2026-08-06-hover-preview-worker-offload-design.md.
+  // plus a size gate: HOVER_PREVIEW_MAX_BYTES (declared in
+  // lib/hoverPreviewConstants.ts, the single source of truth shared with
+  // HoverPreviewCanvas.tsx's own child-side gate and
+  // hoverPreviewWorker.ts's worker-side guard; imported here via
+  // HoverPreviewCanvas.tsx's re-export) keeps pathologically large files
+  // from ever mounting a live preview -- see docs/superpowers/specs/
+  // 2026-08-06-hover-preview-worker-offload-design.md.
   const isHoverPreviewEligible = (model: STLModel): boolean => {
     if (model.size > HOVER_PREVIEW_MAX_BYTES) return false;
     const lower = model.name.toLowerCase();

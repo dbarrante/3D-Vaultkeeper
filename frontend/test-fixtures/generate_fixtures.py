@@ -1,19 +1,24 @@
-# frontend/public/test-fixtures/generate_fixtures.py -- run once.
-# small.3mf, small.stp and corrupt.stl are tiny and committed; the two
-# synthetic *-threshold-*.stl files are ~105MB combined and are
-# .gitignore'd (see frontend/public/test-fixtures/.gitignore) rather than
-# committed -- frontend/public/ is copied verbatim into frontend/dist/ on
-# every `bun run build`, and desktop/build.ps1 runs exactly that build to
-# produce the shipped desktop app, so committing them would put 105MB of
-# synthetic test data inside every real build/release unless separately
-# excluded at build time. Regenerate them locally before running the
-# integration test suite.
+# frontend/test-fixtures/generate_fixtures.py -- run once.
+# small.3mf, small.stp, small.stl, and corrupt.stl are tiny and committed;
+# the two synthetic *-threshold-*.stl files are ~105MB combined and are
+# .gitignore'd (see frontend/test-fixtures/.gitignore) rather than
+# committed. Regenerate them locally before running the integration test
+# suite.
+#
+# This directory lives OUTSIDE frontend/public/ deliberately (moved there
+# after an earlier version of this plan accidentally shipped these fixtures
+# into real release builds -- frontend/public/ is copied verbatim into
+# frontend/dist/ on every `bun run build`, and desktop/build.ps1 runs
+# exactly that build to produce the shipped desktop app). The integration
+# test suite (hoverPreview.integration_test.py) uploads these files by
+# reading them directly off disk via Playwright's request API, not by
+# fetching them through a dev-server URL, so there is no need for them to
+# be inside `public/` (or served by any URL) at all.
 #
 # Paths are anchored to this script's own location (not the current working
 # directory) so it behaves the same whether invoked as `python
-# public/test-fixtures/generate_fixtures.py` from frontend/, or as
-# `python frontend/public/test-fixtures/generate_fixtures.py` from the repo
-# root.
+# test-fixtures/generate_fixtures.py` from frontend/, or as
+# `python frontend/test-fixtures/generate_fixtures.py` from the repo root.
 import struct
 import zipfile
 from pathlib import Path

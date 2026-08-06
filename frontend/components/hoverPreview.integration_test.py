@@ -47,9 +47,13 @@
 #
 # Fixtures must exist first (see generate_fixtures.py -- the two
 # *-threshold-*.stl files are gitignored and regenerated locally, not
-# committed) AND the build above must be freshly re-run afterward, since
-# frontend/public/ is copied into frontend/dist/ at build time:
-#   python public/test-fixtures/generate_fixtures.py     (from frontend/)
+# committed). They live in frontend/test-fixtures/ (a sibling of
+# frontend/public/, NOT inside it -- see upload_fixture()'s comment for why)
+# and are uploaded by reading them directly off disk, so unlike an earlier
+# version of this suite, there is no need to rebuild after generating them
+# -- they aren't served by the app at all, just read by this script and
+# posted straight to the backend:
+#   python test-fixtures/generate_fixtures.py     (from frontend/)
 #
 # Configurable via env vars:
 #   HOVER_TEST_FRONTEND_URL  (default http://localhost:4174 -- MUST match
@@ -65,6 +69,7 @@
 #
 # Run: python components/hoverPreview.integration_test.py
 import os
+import pathlib
 import sys
 import time
 import urllib.request
@@ -72,6 +77,10 @@ from playwright.sync_api import sync_playwright
 
 FRONTEND_URL = os.environ.get("HOVER_TEST_FRONTEND_URL", "http://localhost:4174")
 BACKEND_URL = os.environ.get("HOVER_TEST_BACKEND_URL", "http://localhost:8000")
+# frontend/test-fixtures/ -- a sibling of this file's own frontend/components/
+# directory, not inside frontend/public/. See upload_fixture()'s comment for
+# why fixtures deliberately do NOT live under public/.
+FIXTURES_DIR = pathlib.Path(__file__).resolve().parent.parent / "test-fixtures"
 
 
 def set_api_override(page):
@@ -90,34 +99,51 @@ def set_api_override(page):
     )
 
 
-def upload_fixture(page, fixture_path, folder_id):
+def upload_fixture(page, fixture_filename, folder_id):
     # Uses the real upload API, matching how the original bug was found --
     # against the actual production code path, not a synthetic DOM-only
-    # test. Parses the response JSON in-browser (rather than via Playwright's
-    # own page.expect_response().json(), which buffers the full response body
-    # through the CDP inspector cache) -- for the 45MB/60MB fixtures that
-    # buffered body gets evicted from the inspector cache before Python can
-    # read it ("Request content was evicted from inspector cache"), so
-    # letting the browser's own fetch().json() do the parsing and just
-    # returning the small resulting JSON object avoids the large-body
-    # round-trip entirely.
-    return page.evaluate(
-        """
-        async ({ fixturePath, folderId, backendUrl }) => {
-            const res = await fetch(fixturePath);
-            const blob = await res.blob();
-            const file = new File([blob], fixturePath.split('/').pop());
-            const formData = new FormData();
-            formData.append('file', file);
-            formData.append('folderId', folderId);
-            const uploadRes = await fetch(backendUrl + '/api/models/upload', {
-                method: 'POST', body: formData
-            });
-            return await uploadRes.json();
-        }
-        """,
-        {"fixturePath": fixture_path, "folderId": folder_id, "backendUrl": BACKEND_URL},
+    # test.
+    #
+    # Reads the fixture directly off disk and posts it via Playwright's OWN
+    # request API (page.request.post), not a browser-side fetch(). This is
+    # a whole-plan review fix: an earlier version of this function did
+    # `fetch(fixturePath)` from inside the page (page.evaluate), which
+    # required these fixtures to be served by URL under frontend/public/ --
+    # and frontend/public/ is copied verbatim into frontend/dist/ on every
+    # `bun run build`, so that requirement is exactly what caused these test
+    # fixtures to risk shipping inside real release builds (desktop/
+    # build.ps1 packages dist/ into the desktop app). Fixtures now live in
+    # frontend/test-fixtures/ (a sibling of public/, not inside it) and are
+    # uploaded from disk with no dependency on any URL or dev/preview server
+    # serving them at all.
+    #
+    # This also happens to retire an earlier workaround: a prior version of
+    # this function parsed the upload response's JSON in-browser (rather
+    # than via Playwright's page.expect_response().json()) specifically to
+    # avoid "Request content was evicted from inspector cache" for the
+    # large 45MB/60MB fixtures -- that error came from Playwright's CDP
+    # response-body buffering when reading a *browser-originated* fetch's
+    # response through the inspector protocol. page.request.post() doesn't
+    # go through the browser's network stack or the CDP inspector at all
+    # (it's a direct HTTP request from Playwright's own Python/Node
+    # process), so that failure mode doesn't apply here -- confirmed by
+    # this rewrite's full test run (see the report) uploading the same
+    # 45MB/60MB fixtures with no eviction error and no special-casing
+    # needed.
+    fixture_path = FIXTURES_DIR / fixture_filename
+    file_bytes = fixture_path.read_bytes()
+    response = page.request.post(
+        f"{BACKEND_URL}/api/models/upload",
+        multipart={
+            "file": {
+                "name": fixture_filename,
+                "mimeType": "application/octet-stream",
+                "buffer": file_bytes,
+            },
+            "folderId": folder_id,
+        },
     )
+    return response.json()
 
 
 def canvas_visible(page):
@@ -228,17 +254,17 @@ def main():
             # of this script only populated the id list after all six
             # uploads succeeded, which silently leaked a model row on any
             # partial failure.
-            under = upload_fixture(page, "/test-fixtures/under-threshold-45mb.stl", folder_id)
+            under = upload_fixture(page, "under-threshold-45mb.stl", folder_id)
             uploaded_ids.append(under["id"])
-            over = upload_fixture(page, "/test-fixtures/over-threshold-60mb.stl", folder_id)
+            over = upload_fixture(page, "over-threshold-60mb.stl", folder_id)
             uploaded_ids.append(over["id"])
-            small = upload_fixture(page, "/test-fixtures/small.stl", folder_id)
+            small = upload_fixture(page, "small.stl", folder_id)
             uploaded_ids.append(small["id"])
-            small_3mf = upload_fixture(page, "/test-fixtures/small.3mf", folder_id)
+            small_3mf = upload_fixture(page, "small.3mf", folder_id)
             uploaded_ids.append(small_3mf["id"])
-            small_stp = upload_fixture(page, "/test-fixtures/small.stp", folder_id)
+            small_stp = upload_fixture(page, "small.stp", folder_id)
             uploaded_ids.append(small_stp["id"])
-            corrupt = upload_fixture(page, "/test-fixtures/corrupt.stl", folder_id)
+            corrupt = upload_fixture(page, "corrupt.stl", folder_id)
             uploaded_ids.append(corrupt["id"])
 
             # Sanity check the threshold fixtures actually straddle
@@ -554,6 +580,81 @@ def main():
             assert not fallback_live_canvas, "should show static thumbnail only when OffscreenCanvas is unsupported"
             fallback_context.close()
             print("OffscreenCanvas-unsupported fallback: PASSED")
+
+            # --- Test 5: delete-on-ready regression (whole-plan review
+            # fix). Directly verifies a real, previously-shipped bug:
+            # hoverPreviewClient.ts's onmessage handler used to
+            # unconditionally delete a session's activeCallbacks entry
+            # after EITHER "ready" or "error" -- so any error arriving
+            # AFTER ready (webglcontextlost, forwarded from
+            # hoverPreviewWorker.ts's own contextLostHandler; or a worker
+            # crash mid-animation) found the entry already gone and was
+            # silently dropped at the `if (!callbacks) return;` line,
+            # defeating the entire point of that forwarding logic. Uses a
+            # fresh browser context so the very first hover on this page
+            # deterministically gets sessionId 1 (hoverPreviewClient.ts's
+            # nextSessionId is a module-scope counter starting at 1, reset
+            # fresh on every page load), then captures the real constructed
+            # Worker instance (same window.Worker-override technique Test 2
+            # uses) so a synthetic LATE "error" for that exact session can
+            # be delivered directly to hoverPreviewClient.ts's real,
+            # unmodified `w.onmessage` handler -- the exact function this
+            # bug lived in, not a reimplementation of it. (A real
+            # webglcontextlost can't easily be triggered from outside the
+            # worker's own OffscreenCanvas, so this simulates the message
+            # hoverPreviewClient.ts would receive from that real event,
+            # which is the only thing its onmessage handler -- the thing
+            # that was actually fixed -- can observe either way.)
+            regression_context = browser.new_context(viewport={"width": 1920, "height": 2000})
+            regression_page = regression_context.new_page()
+            regression_page.add_init_script(
+                """
+                window.__capturedWorker = null;
+                const OrigWorker = window.Worker;
+                window.Worker = function(...args) {
+                    const w = new OrigWorker(...args);
+                    if (String(args[0]).includes('hoverPreviewWorker')) window.__capturedWorker = w;
+                    return w;
+                };
+                """
+            )
+            set_api_override(regression_page)
+            regression_page.goto(FRONTEND_URL)
+            regression_page.wait_for_load_state("networkidle")
+            regression_page.wait_for_timeout(1500)
+
+            regression_card = regression_page.get_by_text(small["name"]).first
+            regression_card.hover()
+            regression_page.wait_for_timeout(3000)
+            assert canvas_visible(regression_page), (
+                "expected small.stl's live preview to reach ready before the delete-on-ready regression check"
+            )
+
+            # The session that just reached ready is sessionId 1 -- the
+            # very first hover-preview session ever constructed on this
+            # fresh page.
+            regression_page.evaluate(
+                """
+                () => {
+                    window.__capturedWorker.onmessage({
+                        data: {
+                            type: 'error',
+                            sessionId: 1,
+                            message: 'simulated post-ready failure (delete-on-ready regression test)',
+                        },
+                    });
+                }
+                """
+            )
+            regression_page.wait_for_timeout(500)
+            post_ready_error_reached_onerror = not canvas_visible(regression_page)
+            assert post_ready_error_reached_onerror, (
+                "a late 'error' message for an already-ready session did not fall back to the "
+                "static thumbnail -- activeCallbacks likely deleted the session's entry on "
+                "'ready', silently dropping this later error (the exact bug this test exists to catch)"
+            )
+            regression_context.close()
+            print("delete-on-ready regression (late error after ready still reaches onError): PASSED")
 
         finally:
             # Step 7: delete the uploaded test-fixture model rows from the
