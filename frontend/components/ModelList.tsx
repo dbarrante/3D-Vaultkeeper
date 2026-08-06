@@ -25,7 +25,9 @@ import {
   SLICERS,
   SlicerType,
 } from "../services/api";
-import HoverPreviewCanvas from "./HoverPreviewCanvas";
+import HoverPreviewCanvas, {
+  HOVER_PREVIEW_MAX_BYTES,
+} from "./HoverPreviewCanvas";
 
 import Card from "@mui/material/Card";
 import CardContent from "@mui/material/CardContent";
@@ -187,9 +189,13 @@ const ModelList: React.FC<ModelListProps> = ({
   >(null);
   const hoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Same STL/3MF/STEP format restriction as the static-thumbnail generation
-  // in Tasks 1/3.
+  // Same STL/3MF/STEP format restriction as the static-thumbnail generation,
+  // plus a size gate: HOVER_PREVIEW_MAX_BYTES (imported from
+  // HoverPreviewCanvas.tsx, the single source of truth) keeps pathologically
+  // large files from ever mounting a live preview -- see
+  // docs/superpowers/specs/2026-08-06-hover-preview-worker-offload-design.md.
   const isHoverPreviewEligible = (model: STLModel): boolean => {
+    if (model.size > HOVER_PREVIEW_MAX_BYTES) return false;
     const lower = model.name.toLowerCase();
     return (
       lower.endsWith(".stl") ||

@@ -1,0 +1,495 @@
+# frontend/components/hoverPreview.integration_test.py
+#
+# Permanent Playwright verification for the hover-preview Web Worker
+# offload (see docs/superpowers/specs/
+# 2026-08-06-hover-preview-worker-offload-design.md). Exercises the real
+# production code path -- real file uploads through the real backend API,
+# real hover interactions against the real dev-server-built app -- rather
+# than a synthetic DOM-only test, since that is how the original main-thread
+# freeze bug was found in the first place.
+#
+# MUST be run against a PRODUCTION build (`bun run build` + `bun run
+# preview`), NOT `bun run dev`. This is not a style preference: React's
+# <React.StrictMode> (frontend/index.tsx) double-invokes every effect in
+# development (mount -> cleanup -> mount) as a diagnostic. HoverPreviewCanvas
+# calls canvas.transferControlToOffscreen() in that effect, and canvas
+# transfer is one-way and permanent -- so StrictMode's second invocation
+# throws "Cannot transfer control from a canvas for more than one time" on
+# literally every hover, every time, in dev. It fails closed (falls back to
+# the static thumbnail, no crash), so nothing looks obviously broken in dev
+# -- hover preview just silently never renders. This is confirmed empirically
+# (see this plan's Task 3 report) and is inherent to the offscreen-canvas
+# architecture combined with StrictMode's dev-only diagnostic; it does not
+# reproduce in a production build, which is what real users (including the
+# desktop app) actually run. See the Task 3 report for the full writeup and
+# for a related, NOT StrictMode-only, finding about the same effect's
+# dependency array.
+#
+# Assumes a backend is already running:
+#   cd backend && ./run.sh                      (or the equivalent uvicorn
+#                                                  invocation for this OS)
+# and a production build is built and served:
+#   cd frontend && bun run build && bun run preview -- --port 4174
+#   (vite.config.ts pins preview.port to 5173, which may already be in use
+#   by an unrelated dev-server instance -- pass an explicit free port at the
+#   CLI rather than editing the config.)
+#
+# Fixtures must exist first (see generate_fixtures.py -- the two
+# *-threshold-*.stl files are gitignored and regenerated locally, not
+# committed) AND the build above must be freshly re-run afterward, since
+# frontend/public/ is copied into frontend/dist/ at build time:
+#   python public/test-fixtures/generate_fixtures.py     (from frontend/)
+#
+# Configurable via env vars:
+#   HOVER_TEST_FRONTEND_URL  (default http://localhost:5173 -- override to
+#                              match whatever port `bun run preview` chose)
+#   HOVER_TEST_BACKEND_URL   (default http://localhost:8000)
+#
+# Run: python components/hoverPreview.integration_test.py
+import os
+import sys
+import time
+import urllib.request
+from playwright.sync_api import sync_playwright
+
+FRONTEND_URL = os.environ.get("HOVER_TEST_FRONTEND_URL", "http://localhost:5173")
+BACKEND_URL = os.environ.get("HOVER_TEST_BACKEND_URL", "http://localhost:8000")
+
+
+def set_api_override(page):
+    # The app resolves its API origin via resolveApiOrigin() (frontend/
+    # services/api.ts), which returns window.location.origin unless a
+    # "api-port-override" key is set in localStorage (see
+    # frontend/components/Settings.tsx) -- normally set once via the
+    # Settings panel. Vite's dev server has no /api proxy, so without this
+    # override every fetch the live app itself makes (including the hover-
+    # preview worker's model-file fetch) would resolve to the frontend's
+    # own origin instead of the real backend. Must run before the app's
+    # first script evaluates, hence add_init_script rather than a plain
+    # page.evaluate after goto.
+    page.add_init_script(
+        f"window.localStorage.setItem('api-port-override', '{BACKEND_URL}');"
+    )
+
+
+def upload_fixture(page, fixture_path, folder_id):
+    # Uses the real upload API, matching how the original bug was found --
+    # against the actual production code path, not a synthetic DOM-only
+    # test. Parses the response JSON in-browser (rather than via Playwright's
+    # own page.expect_response().json(), which buffers the full response body
+    # through the CDP inspector cache) -- for the 45MB/60MB fixtures that
+    # buffered body gets evicted from the inspector cache before Python can
+    # read it ("Request content was evicted from inspector cache"), so
+    # letting the browser's own fetch().json() do the parsing and just
+    # returning the small resulting JSON object avoids the large-body
+    # round-trip entirely.
+    return page.evaluate(
+        """
+        async ({ fixturePath, folderId, backendUrl }) => {
+            const res = await fetch(fixturePath);
+            const blob = await res.blob();
+            const file = new File([blob], fixturePath.split('/').pop());
+            const formData = new FormData();
+            formData.append('file', file);
+            formData.append('folderId', folderId);
+            const uploadRes = await fetch(backendUrl + '/api/models/upload', {
+                method: 'POST', body: formData
+            });
+            return await uploadRes.json();
+        }
+        """,
+        {"fixturePath": fixture_path, "folderId": folder_id, "backendUrl": BACKEND_URL},
+    )
+
+
+def canvas_visible(page):
+    return page.evaluate(
+        """
+        () => {
+            const canvases = document.querySelectorAll('canvas');
+            for (const c of canvases) {
+                if (!c.classList.contains('invisible') && c.offsetHeight > 0) return true;
+            }
+            return false;
+        }
+        """
+    )
+
+
+def visible_canvas_count(page):
+    return page.evaluate(
+        """
+        () => Array.from(document.querySelectorAll('canvas'))
+            .filter(c => !c.classList.contains('invisible') && c.offsetHeight > 0)
+            .length
+        """
+    )
+
+
+def wait_for_thumbnails_idle(page, timeout_ms=60000):
+    # The background static-thumbnail generation loop (App.tsx) starts
+    # working through any newly-uploaded models (including the 45MB/60MB
+    # fixtures) the moment they appear -- it's already offloaded to its own
+    # worker (thumbnailWorker.ts, a prior plan), but leaving it mid-flight
+    # while measuring hover-preview responsiveness/heap growth would still
+    # be a confound (competing worker/GPU scheduling, competing heap
+    # allocity). Wait for the "Generating thumbnails" bar to disappear
+    # before taking any measurement that claims to isolate the hover-preview
+    # path specifically.
+    try:
+        page.wait_for_selector("text=Generating thumbnails", state="hidden", timeout=timeout_ms)
+    except Exception:
+        pass  # bar may never have appeared (already idle) -- not a failure
+
+
+def delete_models(model_ids):
+    for model_id in model_ids:
+        if not model_id:
+            continue
+        req = urllib.request.Request(
+            f"{BACKEND_URL}/api/models/{model_id}", method="DELETE"
+        )
+        try:
+            urllib.request.urlopen(req)
+        except Exception as err:  # best-effort cleanup, never mask a test failure
+            print(f"  (cleanup warning: failed to delete model {model_id}: {err})")
+
+
+def main():
+    uploaded_ids = []
+    console_messages = []
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        # A generously tall viewport, not Playwright's 1280x720 default.
+        # ModelList.tsx virtualizes the grid via VirtuosoGrid, which only
+        # mounts DOM nodes for rows actually within (or very near) the
+        # viewport -- confirmed empirically: at the default viewport, with
+        # this dev library's existing ~59 pre-seeded models ahead of a
+        # 4-column row, only the first ~4 newly-uploaded fixtures ever
+        # mounted a DOM node at all, and get_by_text(...).hover() on the
+        # 5th/6th (over/under-threshold) fixtures timed out waiting for an
+        # element that was never going to appear -- not a hover-preview bug,
+        # a test-viewport-too-small bug. 2000px of height comfortably fits
+        # several rows so all 6 fixtures (however the dev DB happens to sort
+        # them alongside whatever else is already in it) mount without
+        # requiring the test to compute scroll offsets.
+        page = browser.new_page(viewport={"width": 1920, "height": 2000})
+        page.on("console", lambda msg: console_messages.append(msg.text))
+        set_api_override(page)
+        page.goto(FRONTEND_URL)
+        page.wait_for_load_state("networkidle")
+
+        # Confirm we actually landed on the intended dev-server instance
+        # rather than some other process squatting on the expected port --
+        # this app has been run with multiple concurrent dev-server
+        # instances on adjacent ports before, and a passing run against the
+        # wrong instance would be a silent false-positive.
+        assert page.url.startswith(FRONTEND_URL), (
+            f"expected to be on {FRONTEND_URL}, landed on {page.url} -- "
+            "check HOVER_TEST_FRONTEND_URL"
+        )
+
+        folders = page.evaluate(
+            "(backendUrl) => fetch(backendUrl + '/api/folders').then(r => r.json())",
+            BACKEND_URL,
+        )
+        folder_id = folders[0]["id"]
+
+        try:
+            # Each id is appended immediately after its own upload succeeds
+            # (not collected into a list at the end) so that if a LATER
+            # upload in this sequence raises, the `finally` block below still
+            # cleans up every upload that DID succeed -- an earlier version
+            # of this script only populated the id list after all six
+            # uploads succeeded, which silently leaked a model row on any
+            # partial failure.
+            under = upload_fixture(page, "/test-fixtures/under-threshold-45mb.stl", folder_id)
+            uploaded_ids.append(under["id"])
+            over = upload_fixture(page, "/test-fixtures/over-threshold-60mb.stl", folder_id)
+            uploaded_ids.append(over["id"])
+            small = upload_fixture(page, "/test-fixtures/small.stl", folder_id)
+            uploaded_ids.append(small["id"])
+            small_3mf = upload_fixture(page, "/test-fixtures/small.3mf", folder_id)
+            uploaded_ids.append(small_3mf["id"])
+            small_stp = upload_fixture(page, "/test-fixtures/small.stp", folder_id)
+            uploaded_ids.append(small_stp["id"])
+            corrupt = upload_fixture(page, "/test-fixtures/corrupt.stl", folder_id)
+            uploaded_ids.append(corrupt["id"])
+
+            # Sanity check the threshold fixtures actually straddle
+            # HOVER_PREVIEW_MAX_BYTES (50MB) as intended, rather than Test 2
+            # accidentally proving something about a missing/zero `size`
+            # field instead of the real threshold.
+            assert under["size"] < 50 * 1024 * 1024, f"under-threshold fixture is {under['size']} bytes, not under 50MB"
+            assert over["size"] > 50 * 1024 * 1024, f"over-threshold fixture is {over['size']} bytes, not over 50MB"
+
+            page.reload()
+            page.wait_for_load_state("networkidle")
+            page.wait_for_timeout(1500)
+
+            # --- Baseline: nothing should be hovered yet, so no live canvas
+            # should be visible anywhere on the page. Without this check,
+            # Test 2 and Test 4 ("no visible canvas") and even Test 0's
+            # first iteration could pass vacuously on a stray canvas left
+            # over from page chrome, not because the hover-preview gating
+            # actually did anything.
+            assert not canvas_visible(page), "expected no live preview canvas before any hover"
+
+            # Let the background thumbnail-generation loop (App.tsx) finish
+            # BEFORE any hovering, not just before the responsiveness
+            # measurement -- observed empirically: while it's still
+            # processing the newly-uploaded fixtures (especially the
+            # 45MB/60MB ones), a static thumbnail arriving for a card
+            # changes that card's content and can shift VirtuosoGrid's
+            # virtualization window (see ModelList.tsx's own comment on the
+            # FileBox-icon-height vs thumbnail-image-height reflow problem),
+            # which raced with locator lookups below and intermittently made
+            # a card transiently unlocatable (or briefly double-rendered)
+            # mid-run. This is a pre-existing virtualization/thumbnail-loop
+            # interaction, unrelated to the hover-preview worker itself;
+            # waiting it out here avoids flaking on it rather than
+            # papering over it with retries.
+            wait_for_thumbnails_idle(page)
+
+            # --- Test 0: visual correctness across formats.
+            # STL and STEP should each produce a visible, non-blank
+            # live-preview canvas within a few seconds.
+            #
+            # 3MF is a KNOWN, CONFIRMED-BROKEN case, not yet fixed -- see the
+            # Task 3 report (docs/superpowers/sdd/
+            # 2026-08-06-hover-preview-worker-offload/task-3-report.md).
+            # Root cause: three.js's ThreeMFLoader.parse() calls
+            # `new DOMParser().parseFromString(...)` unconditionally
+            # (node_modules/three/examples/jsm/loaders/3MFLoader.js:215,273),
+            # and DOMParser does not exist in a dedicated Worker's global
+            # scope in Chromium (confirmed empirically against Chromium
+            # 149 -- typeof DOMParser === 'undefined' inside a plain
+            # `new Worker(...)`). hoverPreviewWorker.ts's handleStart
+            # try/catch reports this as a real "error" (not a hang, not a
+            # crash), so the card correctly falls back to its static
+            # thumbnail -- 3MF hover preview fails closed, not open. The
+            # SAME root cause affects the pre-existing thumbnailWorker.ts's
+            # 3MF branch, which is outside this task's scope but shares the
+            # identical `new DOMParser()` call. Asserting a live 3MF canvas
+            # here would make this a permanently-red test until that
+            # worker-side XML-parsing fix lands (out of scope for Task 3 --
+            # see the report). TODO: once fixed, change this assertion back
+            # to `assert canvas_visible(page)` like the STL/STEP cases.
+            for fixture in (small, small_stp):
+                fmt_card = page.get_by_text(fixture["name"]).first
+                fmt_card.hover()
+                page.wait_for_timeout(3000)
+                assert canvas_visible(page), f"expected a live preview for {fixture['name']}"
+                page.mouse.move(5, 5)
+                page.wait_for_timeout(500)
+
+            mf_card = page.get_by_text(small_3mf["name"]).first
+            mf_card.hover()
+            page.wait_for_timeout(3000)
+            assert not canvas_visible(page), (
+                "small.3mf unexpectedly showed a live preview -- if the worker-side "
+                "DOMParser-in-Worker issue has been fixed, update this test to assert "
+                "canvas_visible(page) instead (see the comment above)"
+            )
+            page.mouse.move(5, 5)
+            page.wait_for_timeout(500)
+            print("visual correctness: STL/STEP live preview PASSED; 3MF confirmed-broken-and-falls-back (see report) PASSED")
+
+            # --- Test 1: under-threshold file gets a live preview, main
+            # thread stays responsive ---
+            page.evaluate(
+                """
+                () => {
+                    window.__gaps = [];
+                    window.__lastT = performance.now();
+                    window.__raf = function() {
+                        const now = performance.now();
+                        window.__gaps.push(now - window.__lastT);
+                        window.__lastT = now;
+                        requestAnimationFrame(window.__raf);
+                    };
+                    requestAnimationFrame(window.__raf);
+                }
+                """
+            )
+            card = page.get_by_text(under["name"]).first
+            card.hover()
+            page.wait_for_timeout(3000)
+            gaps = page.evaluate("window.__gaps")
+            max_gap = max(gaps) if gaps else 0
+            print(f"under-threshold hover max frame gap: {max_gap:.0f}ms")
+            assert max_gap < 200, f"main thread blocked {max_gap}ms hovering an under-threshold file"
+
+            assert canvas_visible(page), "expected a visible live-preview canvas for an under-threshold file"
+            page.mouse.move(5, 5)
+            page.wait_for_timeout(500)
+
+            # --- Test 2: over-threshold file never shows a live preview.
+            # (The window.Worker-construction probe below is INFORMATIONAL
+            # ONLY, not a real assertion -- by this point in the run the
+            # hover-preview worker singleton has already been constructed by
+            # Test 0/1's hovers, so `new Worker(...)` will not fire again
+            # regardless of whether the over-threshold gate works. The
+            # meaningful check is the canvas-visibility assertion below,
+            # which is driven by ModelList.tsx's isHoverPreviewEligible size
+            # gate short-circuiting BEFORE HoverPreviewCanvas ever mounts.)
+            page.evaluate("window.__workerCreated = false;")
+            page.evaluate(
+                """
+                () => {
+                    const OrigWorker = window.Worker;
+                    window.Worker = function(...args) {
+                        if (String(args[0]).includes('hoverPreviewWorker')) window.__workerCreated = true;
+                        return new OrigWorker(...args);
+                    };
+                }
+                """
+            )
+            over_card = page.get_by_text(over["name"]).first
+            over_card.hover()
+            page.wait_for_timeout(1000)
+            worker_created = page.evaluate("window.__workerCreated")
+            print(f"  (informational: new Worker() constructed during over-threshold hover: {worker_created})")
+            assert not canvas_visible(page), "over-threshold file should never show a live preview canvas"
+            page.mouse.move(5, 5)
+            page.wait_for_timeout(500)
+            print("threshold gating (over-threshold never shows a live canvas): PASSED")
+
+            # --- Test 3: cancellation across rapid hover/unhover leaves no
+            # growing MAIN-THREAD heap, and -- more importantly -- does not
+            # exhaust the browser's WebGL context cap.
+            #
+            # Caveat, stated explicitly rather than glossed over:
+            # performance.memory.usedJSHeapSize reports the PAGE isolate's
+            # heap only. Post-offload, the geometry buffers, three.js scene
+            # graph, and WebGL context for each hover session all live in
+            # the WORKER's isolate, not the page's -- so a flat/near-zero
+            # page-heap delta here does NOT by itself prove the worker isn't
+            # leaking. It only proves the main thread isn't accumulating
+            # session state (callbacks, closures) across cycles. The context
+            # cap check immediately below is what actually proves
+            # `stopCurrentSession`'s forceContextLoss() is working: a leaked
+            # WebGL context per cycle would exhaust Chrome's hard per-page
+            # context cap within a handful of cycles, and the NEXT hover
+            # after that would silently fail to render.
+            has_precise_memory = page.evaluate("() => typeof performance.memory !== 'undefined'")
+            mem_before = page.evaluate("performance.memory.usedJSHeapSize") if has_precise_memory else None
+            for _ in range(5):
+                card.hover()
+                page.wait_for_timeout(600)
+                page.mouse.move(5, 5)
+                page.wait_for_timeout(100)
+            page.wait_for_timeout(2000)
+            if has_precise_memory:
+                mem_after = page.evaluate("performance.memory.usedJSHeapSize")
+                growth_mb = (mem_after - mem_before) / 1e6
+                if mem_before == 0 and mem_after == 0:
+                    print("heap growth after 5 rapid hover/unhover cycles: UNMEASURED (performance.memory returned 0 -- "
+                          "Chrome quantizes/suppresses this API without --enable-precise-memory-info; not a pass, just no data)")
+                else:
+                    print(f"heap growth after 5 rapid hover/unhover cycles (MAIN THREAD ONLY -- see caveat above): {growth_mb:.1f}MB")
+                    assert growth_mb < 100, f"heap grew {growth_mb}MB after rapid hover/unhover -- possible leak"
+            else:
+                print("heap growth after 5 rapid hover/unhover cycles: UNMEASURED (performance.memory unavailable in this browser)")
+
+            # The real leak-proof check: one more hover after the 5 rapid
+            # cycles must still successfully produce a live canvas. If
+            # stopCurrentSession()/forceContextLoss() were failing to
+            # release WebGL contexts, this is the hover that would start
+            # silently failing (context creation refused once the browser's
+            # cap is hit).
+            card.hover()
+            page.wait_for_timeout(3000)
+            assert canvas_visible(page), (
+                "hover after 5 rapid hover/unhover cycles produced no live canvas -- "
+                "possible WebGL context leak (browser context cap exhausted)"
+            )
+            page.mouse.move(5, 5)
+            page.wait_for_timeout(500)
+            print("cancellation (no growing main-thread heap; no WebGL-context-cap exhaustion): PASSED")
+
+            # --- Test 3b: cancel-before-restart invariant. ModelList.tsx
+            # debounces hover-preview mounting by 400ms (onMouseEnter's
+            # setTimeout) before HoverPreviewCanvas even mounts, so to
+            # actually exercise "a session gets superseded mid-flight" (not
+            # just "a hover that never started"), the first card must be
+            # given enough time to mount and start its worker session, but
+            # not enough time to plausibly finish loading/rendering before
+            # being superseded by hovering a different card.
+            first_card = page.get_by_text(under["name"]).first  # 45MB: slow enough to still be loading
+            second_card = page.get_by_text(small["name"]).first  # tiny: loads almost immediately
+            console_before = len(console_messages)
+            first_card.hover()
+            page.wait_for_timeout(600)  # past the 400ms mount debounce, but the 45MB file is still fetching/parsing
+            second_card.hover()
+            page.wait_for_timeout(3000)
+            stale_wrong_card_fired = visible_canvas_count(page) > 1
+            new_console = console_messages[console_before:]
+            stale_warning_logged = any("Hover preview failed" in m for m in new_console)
+            assert not stale_wrong_card_fired, "rapid hover-swap produced more than one live canvas -- stale session callback fired"
+            assert not stale_warning_logged, (
+                f"a '[hoverPreviewClient] Hover preview failed' warning fired during a rapid card swap -- "
+                f"a superseded session's callback ran when it shouldn't have. Console output: {new_console}"
+            )
+            assert canvas_visible(page), "expected the second (currently-hovered) card to show a live preview"
+            page.mouse.move(5, 5)
+            page.wait_for_timeout(500)
+            print("cancel-before-restart invariant (rapid card swap, no stale callback/canvas): PASSED")
+
+            # --- Test 4: error path falls back to static thumbnail.
+            # Uses a genuinely corrupt uploaded file rather than mocking
+            # window.fetch on the main thread -- the hover-preview worker
+            # performs its OWN fetch inside its own worker global scope, so
+            # a main-thread fetch mock (as an earlier draft of this test
+            # used, and as the original brief specified) can never intercept
+            # it. corrupt.stl is 20 garbage bytes, well under the 84 bytes
+            # STLLoader needs before it even attempts to read a triangle
+            # count, so parsing throws synchronously and
+            # hoverPreviewWorker.ts's handleStart try/catch reports a real
+            # "error" message.
+            corrupt_card = page.get_by_text(corrupt["name"]).first
+            corrupt_card.hover()
+            page.wait_for_timeout(2000)
+            fell_back = not canvas_visible(page)
+            assert fell_back, "corrupt file should fall back to static thumbnail, not show a broken canvas"
+            page.mouse.move(5, 5)
+            page.wait_for_timeout(500)
+            print("error-path fallback (corrupt file never shows a broken canvas): PASSED")
+
+            # --- Step 6: OffscreenCanvas-unsupported fallback, end-to-end.
+            # window.OffscreenCanvas must be stubbed out BEFORE the app's own
+            # modules first evaluate (hoverPreviewClient.ts's getWorker()
+            # checks `typeof OffscreenCanvas === "undefined"` once, lazily,
+            # on first use -- but stubbing after load would race with
+            # whether that check already ran) -- hence a fresh browser
+            # context with add_init_script, not a page.evaluate on the
+            # already-loaded page above. Reuses the already-uploaded `small`
+            # fixture rather than uploading a new one, since cleanup (below)
+            # hasn't run yet.
+            fallback_context = browser.new_context(viewport={"width": 1920, "height": 2000})
+            fallback_page = fallback_context.new_page()
+            fallback_page.add_init_script("window.OffscreenCanvas = undefined;")
+            set_api_override(fallback_page)
+            fallback_page.goto(FRONTEND_URL)
+            fallback_page.wait_for_load_state("networkidle")
+            fallback_page.wait_for_timeout(1500)
+
+            fallback_card = fallback_page.get_by_text(small["name"]).first
+            fallback_card.hover()
+            fallback_page.wait_for_timeout(1500)
+            fallback_live_canvas = canvas_visible(fallback_page)
+            assert not fallback_live_canvas, "should show static thumbnail only when OffscreenCanvas is unsupported"
+            fallback_context.close()
+            print("OffscreenCanvas-unsupported fallback: PASSED")
+
+        finally:
+            # Step 7: delete the uploaded test-fixture model rows from the
+            # dev database so repeated runs don't accumulate junk.
+            delete_models(uploaded_ids)
+
+        browser.close()
+    print("ALL HOVER-PREVIEW TESTS PASSED")
+
+
+if __name__ == "__main__":
+    main()

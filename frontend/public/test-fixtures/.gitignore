@@ -1,0 +1,9 @@
+# Synthetic large-file fixtures for the hover-preview integration test
+# (frontend/components/hoverPreview.integration_test.py). Not committed:
+# combined they are ~105MB, and frontend/public/ is copied verbatim into
+# frontend/dist/ on every `bun run build` -- including desktop/build.ps1's
+# release build -- so committing them would ship 105MB of synthetic test
+# data inside the real desktop app. Regenerate locally with
+# generate_fixtures.py before running the integration test suite.
+under-threshold-45mb.stl
+over-threshold-60mb.stl
