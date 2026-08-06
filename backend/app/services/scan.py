@@ -93,31 +93,3 @@ def scan_watch_folder(watch_folder_row: dict) -> int:
     conn.commit()
     conn.close()
     return ingested
-
-
-def default_downloads_dir() -> Path:
-    return Path.home() / "Downloads"
-
-
-def scan_downloads_folder(downloads_dir: Optional[Path] = None) -> int:
-    target = downloads_dir if downloads_dir is not None else default_downloads_dir()
-    if not target.exists():
-        return 0
-
-    conn = get_db_conn()
-    seen_models = {r["sourcePath"] for r in conn.execute("SELECT sourcePath FROM models WHERE sourcePath IS NOT NULL")}
-    seen_inbox = {r["path"] for r in conn.execute("SELECT path FROM inbox_items")}
-    conn.close()
-    already_seen = seen_models | seen_inbox
-
-    added = 0
-    for file_path in find_new_files(target, already_seen):
-        conn = get_db_conn()
-        conn.execute(
-            "INSERT INTO inbox_items(id,path,detectedAt,status) VALUES (?,?,?,?)",
-            (str(uuid.uuid4()), str(file_path), now_ms(), "pending"),
-        )
-        conn.commit()
-        conn.close()
-        added += 1
-    return added

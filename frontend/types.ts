@@ -83,13 +83,6 @@ export interface WatchFolder {
   enabled: boolean;
 }
 
-export interface InboxItem {
-  id: string;
-  path: string;
-  detectedAt: number;
-  status: string;
-}
-
 export enum ViewMode {
   GRID = "GRID",
   LIST = "LIST",

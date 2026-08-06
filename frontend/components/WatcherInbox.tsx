@@ -1,7 +1,6 @@
 import React, { useEffect, useState } from "react";
 import {
   Eye,
-  Inbox as InboxIcon,
   RefreshCw,
   Trash2,
   Clock,
@@ -11,7 +10,7 @@ import {
   X,
 } from "lucide-react";
 import { api } from "../services/api";
-import { Folder, WatchFolder, InboxItem } from "../types";
+import { Folder, WatchFolder } from "../types";
 import ImportWizard from "./ImportWizard";
 
 const NEW_FOLDER_SENTINEL = "__new__";
@@ -27,14 +26,9 @@ function formatRelativeTime(ms: number | null): string {
   return `${Math.floor(diffHours / 24)}d ago`;
 }
 
-function basename(path: string): string {
-  return path.split(/[\\/]/).pop() || path;
-}
-
 const WatcherInbox: React.FC = () => {
   const [folders, setFolders] = useState<Folder[]>([]);
   const [watchFolders, setWatchFolders] = useState<WatchFolder[]>([]);
-  const [inboxItems, setInboxItems] = useState<InboxItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -42,7 +36,6 @@ const WatcherInbox: React.FC = () => {
   const [newFolderId, setNewFolderId] = useState("");
   const [newFrequency, setNewFrequency] = useState(60);
   const [scanningId, setScanningId] = useState<string | null>(null);
-  const [inboxScanning, setInboxScanning] = useState(false);
   const [browsing, setBrowsing] = useState(false);
   const [browseNote, setBrowseNote] = useState<string | null>(null);
 
@@ -53,19 +46,13 @@ const WatcherInbox: React.FC = () => {
   const [newFolderName, setNewFolderName] = useState("");
   const [folderCreateError, setFolderCreateError] = useState<string | null>(null);
 
-  const [inboxFolderChoice, setInboxFolderChoice] = useState<
-    Record<string, string>
-  >({});
-
   const refresh = async () => {
-    const [f, w, i] = await Promise.all([
+    const [f, w] = await Promise.all([
       api.getFolders(),
       api.getWatchFolders(),
-      api.getInbox(),
     ]);
     setFolders(f);
     setWatchFolders(w);
-    setInboxItems(i);
     if (!newFolderId && f.length > 0) setNewFolderId(f[0].id);
   };
 
@@ -155,34 +142,10 @@ const WatcherInbox: React.FC = () => {
     }
   };
 
-  const handleInboxScanNow = async () => {
-    setInboxScanning(true);
-    try {
-      await api.inboxScanNow();
-      await refresh();
-    } catch (err: any) {
-      setError(err.message || "Inbox scan failed");
-    } finally {
-      setInboxScanning(false);
-    }
-  };
-
-  const handleFileItem = async (id: string) => {
-    const folderId = inboxFolderChoice[id] || folders[0]?.id;
-    if (!folderId) return;
-    await api.fileInboxItem(id, folderId);
-    setInboxItems((prev) => prev.filter((i) => i.id !== id));
-  };
-
-  const handleDismissItem = async (id: string) => {
-    await api.dismissInboxItem(id);
-    setInboxItems((prev) => prev.filter((i) => i.id !== id));
-  };
-
   if (loading) {
     return (
       <div className="mb-8 text-sm text-slate-500">
-        Loading watched folders and inbox...
+        Loading watched folders...
       </div>
     );
   }
@@ -378,94 +341,6 @@ const WatcherInbox: React.FC = () => {
             Add Watched Folder
           </button>
         </form>
-      </div>
-
-      {/* Inbox */}
-      <div className="mb-8">
-        <div className="flex items-center justify-between mb-4">
-          <div className="flex items-center gap-2">
-            <InboxIcon className="w-5 h-5 text-blue-400" />
-            <h3 className="text-lg font-semibold text-white">
-              Inbox
-              {inboxItems.length > 0 && (
-                <span className="ml-2 inline-flex items-center justify-center min-w-[1.5rem] h-6 px-1.5 rounded-full bg-blue-600 text-white text-xs font-bold">
-                  {inboxItems.length}
-                </span>
-              )}
-            </h3>
-          </div>
-          <button
-            onClick={handleInboxScanNow}
-            disabled={inboxScanning}
-            className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-vault-800 border border-vault-700 hover:border-vault-600 text-slate-300 hover:text-white text-sm transition-colors disabled:opacity-50"
-          >
-            <RefreshCw
-              className={`w-3.5 h-3.5 ${inboxScanning ? "animate-spin" : ""}`}
-            />
-            Check Downloads now
-          </button>
-        </div>
-        <p className="text-sm text-slate-400 mb-4">
-          New 3D files that show up in your Downloads folder land here first
-          — nothing is added to the library until you file it into a folder
-          or dismiss it.
-        </p>
-
-        {inboxItems.length === 0 ? (
-          <div className="p-4 bg-vault-800/50 border border-vault-700 rounded-lg text-sm text-slate-500 text-center">
-            Nothing waiting to be filed.
-          </div>
-        ) : (
-          <div className="space-y-2">
-            {inboxItems.map((item) => (
-              <div
-                key={item.id}
-                className="flex items-center justify-between gap-3 p-3 bg-vault-800 border border-vault-700 rounded-lg"
-              >
-                <div className="min-w-0">
-                  <p className="text-sm text-white truncate">
-                    {basename(item.path)}
-                  </p>
-                  <p className="text-xs text-slate-500 truncate" title={item.path}>
-                    {item.path}
-                  </p>
-                </div>
-                <div className="flex items-center gap-2 shrink-0">
-                  <select
-                    className="bg-vault-900 border border-vault-700 rounded-md px-2 py-1.5 text-white text-xs focus:border-blue-500 outline-none"
-                    value={inboxFolderChoice[item.id] || folders[0]?.id || ""}
-                    onChange={(e) =>
-                      setInboxFolderChoice((prev) => ({
-                        ...prev,
-                        [item.id]: e.target.value,
-                      }))
-                    }
-                  >
-                    {folders.map((f) => (
-                      <option key={f.id} value={f.id}>
-                        {f.name}
-                      </option>
-                    ))}
-                  </select>
-                  <button
-                    onClick={() => handleFileItem(item.id)}
-                    className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-medium transition-colors"
-                    title="Add to library"
-                  >
-                    <FolderInput className="w-3.5 h-3.5" />
-                    File
-                  </button>
-                  <button
-                    onClick={() => handleDismissItem(item.id)}
-                    className="px-3 py-1.5 rounded-lg bg-vault-700 hover:bg-vault-600 text-slate-300 hover:text-white text-xs font-medium transition-colors"
-                  >
-                    Dismiss
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
       </div>
 
       {importRootPath && (

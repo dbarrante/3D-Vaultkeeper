@@ -73,6 +73,12 @@ def get_models(folderId: Optional[str] = None):
 def get_thumbnail_queue(limit: int = 1):
     conn = get_db_conn()
     cur = conn.cursor()
+    # `missing` (reference-mode source file no longer on disk) isn't a stored
+    # column -- it's computed in row_to_model() via a live os.path.exists()
+    # check -- so it can't be filtered in SQL. Fetch a larger candidate batch
+    # and drop missing ones in Python instead. This also means a model whose
+    # drive reconnects or file reappears naturally re-enters the queue with
+    # no flag to reset, unlike a stored/cached missing column would allow.
     rows = cur.execute(
         """
         SELECT * FROM models
@@ -88,10 +94,11 @@ def get_thumbnail_queue(limit: int = 1):
         ORDER BY RANDOM()
         LIMIT ?
         """,
-        (limit,),
+        (max(limit, 1) * 20,),
     ).fetchall()
     conn.close()
-    return [row_to_model(r) for r in rows]
+    candidates = [row_to_model(r) for r in rows]
+    return [m for m in candidates if not m["missing"]][:limit]
 
 
 @router.post("/api/models/upload")

@@ -111,46 +111,6 @@ def test_scan_watch_folder_picks_up_sidecar_notes(client, tmp_path):
     assert model["description"] == "Print settings: 0.2mm, 20% infill."
 
 
-def test_scan_downloads_folder_creates_pending_inbox_items(client, tmp_path):
-    from app.services.scan import scan_downloads_folder
-    from app.db import get_db_conn
-
-    downloads = tmp_path / "Downloads"
-    downloads.mkdir()
-    (downloads / "found_online.stl").write_bytes(b"solid found endsolid")
-    (downloads / "not_a_model.pdf").write_bytes(b"%PDF-fake")
-
-    count = scan_downloads_folder(downloads)
-    assert count == 1
-
-    conn = get_db_conn()
-    items = conn.execute("SELECT path, status FROM inbox_items").fetchall()
-    conn.close()
-    assert len(items) == 1
-    assert items[0]["path"] == str(downloads / "found_online.stl")
-    assert items[0]["status"] == "pending"
-
-
-def test_scan_downloads_folder_does_not_redetect_already_flagged_files(client, tmp_path):
-    from app.services.scan import scan_downloads_folder
-
-    downloads = tmp_path / "Downloads"
-    downloads.mkdir()
-    (downloads / "found_online.stl").write_bytes(b"solid found endsolid")
-
-    first = scan_downloads_folder(downloads)
-    second = scan_downloads_folder(downloads)
-
-    assert first == 1
-    assert second == 0
-
-
-def test_default_downloads_dir_is_under_home():
-    from app.services.scan import default_downloads_dir
-    from pathlib import Path
-    assert default_downloads_dir() == Path.home() / "Downloads"
-
-
 def test_scan_watch_folder_references_instead_of_copying(client, tmp_path):
     from app.services.scan import scan_watch_folder
     from app.db import get_db_conn, UPLOAD_DIR

@@ -71,7 +71,7 @@ def test_scheduler_loop_does_not_block_the_event_loop(monkeypatch):
     assert asyncio.run(run()) >= 5
 
 
-def test_scheduler_tick_scans_due_folders_and_downloads(client, tmp_path, monkeypatch):
+def test_scheduler_tick_scans_due_folders(client, tmp_path):
     from app.scheduler import scheduler_tick
     from app.db import get_db_conn
 
@@ -86,10 +86,6 @@ def test_scheduler_tick_scans_due_folders_and_downloads(client, tmp_path, monkey
     )
     conn.commit()
     conn.close()
-
-    downloads = tmp_path / "Downloads"
-    downloads.mkdir()
-    monkeypatch.setattr("app.scheduler.default_downloads_dir", lambda: downloads)
 
     summary = scheduler_tick()
     assert summary["watchFoldersScanned"] == 1

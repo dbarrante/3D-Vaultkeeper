@@ -4,7 +4,6 @@ import {
   StorageStats,
   STLModelCollection,
   WatchFolder,
-  InboxItem,
   ImportTreeNode,
   ImportPlacement,
   ImportResult,
@@ -593,38 +592,6 @@ export const api = {
       method: "POST",
     });
     if (!res.ok) throw new Error("Scan failed");
-    return res.json();
-  },
-
-  // 17. INBOX
-  getInbox: async (): Promise<InboxItem[]> => {
-    const res = await fetch(`${getApiBaseUrl()}/inbox`);
-    if (!res.ok) throw new Error("Failed to fetch inbox");
-    return res.json();
-  },
-
-  fileInboxItem: async (id: string, folderId: string): Promise<STLModel> => {
-    const res = await fetch(`${getApiBaseUrl()}/inbox/${id}/file`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ folderId }),
-    });
-    if (!res.ok) throw new Error("Failed to file inbox item");
-    return res.json();
-  },
-
-  dismissInboxItem: async (id: string): Promise<void> => {
-    const res = await fetch(`${getApiBaseUrl()}/inbox/${id}/dismiss`, {
-      method: "POST",
-    });
-    if (!res.ok) throw new Error("Failed to dismiss inbox item");
-  },
-
-  inboxScanNow: async (): Promise<{ added: number }> => {
-    const res = await fetch(`${getApiBaseUrl()}/inbox/scan-now`, {
-      method: "POST",
-    });
-    if (!res.ok) throw new Error("Inbox scan failed");
     return res.json();
   },
 

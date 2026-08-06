@@ -5,7 +5,7 @@ from typing import Optional
 from fastapi import FastAPI
 
 from app.db import get_db_conn
-from app.services.scan import scan_watch_folder, scan_downloads_folder, default_downloads_dir
+from app.services.scan import scan_watch_folder
 
 TICK_SECONDS = 60
 
@@ -34,13 +34,7 @@ def scheduler_tick() -> dict:
             total_ingested += scan_watch_folder(row)
             scanned += 1
 
-    # bare-name call, not scan.default_downloads_dir() — Python resolves this
-    # against app.scheduler's own module namespace at call time, which is exactly
-    # what tests' monkeypatch.setattr("app.scheduler.default_downloads_dir", ...)
-    # replaces, so tests never touch the real OS Downloads folder
-    inbox_added = scan_downloads_folder(default_downloads_dir())
-
-    return {"watchFoldersScanned": scanned, "totalIngested": total_ingested, "inboxAdded": inbox_added}
+    return {"watchFoldersScanned": scanned, "totalIngested": total_ingested}
 
 
 async def _scheduler_loop():
@@ -67,10 +61,8 @@ def start_scheduler(app: FastAPI) -> None:
     """Registers the background scan loop on the app's startup/shutdown events.
     Gated by DISABLE_SCHEDULER=1 — set by tests/conftest.py's client fixture so
     that merely instantiating the app in a test never spins up a background
-    task that reaches out to the real OS Downloads folder (confirmed live: an
-    ungated version made every test that creates a TestClient scan this
-    machine's actual Downloads folder — which is full of real .3mf files —
-    racing real inbox_items into whatever temp DB that test was using).
+    task that reaches out to real watched folders on this machine while a
+    test is using a temp DB.
     """
     if os.getenv("DISABLE_SCHEDULER") == "1":
         return

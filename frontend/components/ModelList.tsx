@@ -730,8 +730,8 @@ const ModelList: React.FC<ModelListProps> = ({
                   draggable={true}
                   onDragStart={(e) => handleCardDragStart(e, model.id)}
                   onContextMenu={(e) => handleCardContextMenu(e, model)}
-                  onClick={() => {
-                    if (selectionMode) {
+                  onClick={(e) => {
+                    if (e.ctrlKey || e.metaKey || selectionMode) {
                       onToggleSelection(model.id);
                     } else {
                       onSelectModel(model);

@@ -314,6 +314,19 @@ def test_thumbnail_queue_excludes_permanently_failed_models(client):
     assert resp.json() == []
 
 
+def test_thumbnail_queue_excludes_reference_models_with_missing_source_file(client, tmp_path):
+    from app.services.ingestion import ingest_file
+
+    source = tmp_path / "gone.stl"
+    source.write_bytes(b"solid endsolid")
+    ingest_file(str(source), folder_id="1", original_filename="gone.stl", reference_only=True)
+    os.remove(source)
+
+    resp = client.get("/api/models/thumbnail-queue")
+    assert resp.status_code == 200
+    assert resp.json() == []
+
+
 def test_thumbnail_queue_excludes_unsupported_extensions(client):
     _upload(client, name="notes.pdf")
     resp = client.get("/api/models/thumbnail-queue")
