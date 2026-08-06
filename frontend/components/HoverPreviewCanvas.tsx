@@ -46,10 +46,29 @@ const HoverPreviewCanvas: React.FC<{
     // render as ellipses).
     const width = el.clientWidth || 300;
     const height = el.clientHeight || 300;
-    canvas.width = width;
-    canvas.height = height;
+    // Buffer sized in device pixels (capped at 2x -- diminishing returns
+    // for a 240px-tall preview beyond that, and keeps the transferred
+    // buffer from ballooning on very-high-DPR displays), CSS box kept at
+    // the CSS-pixel size via style.width/height below -- the standard
+    // HiDPI canvas pattern. Without this, the buffer was previously sized
+    // 1:1 with CSS pixels, so the preview looked slightly soft on HiDPI
+    // displays. Both dimensions scale by the same factor, so this doesn't
+    // change the aspect ratio the regression test below checks.
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    canvas.width = width * dpr;
+    canvas.height = height * dpr;
     canvas.style.width = "100%";
     canvas.style.height = "100%";
+    // mountRef's div is already `relative` -- without this, the canvas lays
+    // out in-flow as a sibling AFTER the static placeholder instead of
+    // overlaying it, which (a) makes it occupy layout space below the
+    // placeholder while hidden, relying only on MUI Card's incidental
+    // overflow:hidden to clip it, and (b) at the ready transition, paints
+    // the live render ~240px too low (over the card title) for the brief
+    // window between canvas.style.visibility flipping and React committing
+    // setReady(true). Matches the old JSX's `absolute inset-0` exactly.
+    canvas.style.position = "absolute";
+    canvas.style.inset = "0";
     canvas.style.visibility = "hidden";
     el.appendChild(canvas);
 
