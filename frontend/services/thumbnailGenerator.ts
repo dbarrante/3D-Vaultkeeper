@@ -25,12 +25,24 @@ let workerInitFailed = false;
 let nextReqId = 1;
 const pending = new Map<
   number,
-  { resolve: (v: string) => void; reject: (e: Error) => void }
+  {
+    resolve: (v: string) => void;
+    reject: (e: Error) => void;
+    timeoutId: ReturnType<typeof setTimeout>;
+  }
 >();
 
+// A worker crash, an undeserializable message, or a request that never gets
+// a response are all environment/timing failures -- not evidence that the
+// underlying model file can't be rendered. They reject with
+// ThumbnailTransportError (not a plain Error) so that callers such as
+// App.tsx's background loop (which does `instanceof ThumbnailTransportError`
+// to decide "retry later" vs. "permanently mark thumbnailFailed") treat them
+// as transient, matching how a failed `fetch()` is already handled.
 function failAllPending(message: string) {
   for (const entry of pending.values()) {
-    entry.reject(new Error(message));
+    clearTimeout(entry.timeoutId);
+    entry.reject(new ThumbnailTransportError(message));
   }
   pending.clear();
 }
@@ -52,6 +64,7 @@ function getWorker(): Worker | null {
       const entry = pending.get(msg.reqId);
       if (!entry) return;
       pending.delete(msg.reqId);
+      clearTimeout(entry.timeoutId);
       // Comparing with `=== true` (rather than the more idiomatic `if
       // (msg.ok)`) is required for TypeScript to narrow the `ok: false`
       // branch's `kind`/`message` fields below -- this project's tsconfig
@@ -70,26 +83,90 @@ function getWorker(): Worker | null {
       // The worker crashed outright (not a per-request error message) --
       // fail every in-flight request and stop using this worker instance
       // for the rest of the session; future calls fall back to the
-      // synchronous main-thread path below.
+      // synchronous main-thread path below. Logged with console.warn (not
+      // silent) since this is a session-wide degradation back to
+      // main-thread-blocking rendering, and the dead worker is explicitly
+      // terminated rather than left to be garbage collected.
+      console.warn(
+        "[thumbnailGenerator] Worker crashed; falling back to synchronous " +
+          "main-thread thumbnail rendering for the rest of this session.",
+      );
       failAllPending("Thumbnail worker crashed");
+      w.terminate();
+      workerInitFailed = true;
+      worker = null;
+    };
+    w.onmessageerror = () => {
+      // A message from the worker failed to deserialize -- the worker
+      // connection can no longer be trusted, so treat it the same as an
+      // outright crash: fail everything in-flight, terminate, and fall
+      // back to the synchronous path for the rest of the session.
+      console.warn(
+        "[thumbnailGenerator] Worker sent an undeserializable message; " +
+          "falling back to synchronous main-thread thumbnail rendering " +
+          "for the rest of this session.",
+      );
+      failAllPending("Thumbnail worker message could not be deserialized");
+      w.terminate();
       workerInitFailed = true;
       worker = null;
     };
     worker = w;
     return worker;
-  } catch {
+  } catch (err) {
+    console.warn(
+      "[thumbnailGenerator] Failed to construct thumbnail worker; falling " +
+        "back to synchronous main-thread thumbnail rendering.",
+      err,
+    );
     workerInitFailed = true;
     return null;
   }
 }
+
+// Requests should never legitimately take anywhere near this long; this
+// exists purely as a safety net so a hung or silently-killed worker (e.g. a
+// silent OOM kill that fires neither `onerror` nor `onmessageerror`, or a
+// worker-side fetch() that never resolves) can't wedge a caller's `await`
+// forever. Callers such as App.tsx's background loop otherwise never reach
+// their next scheduled tick and the UI's "Generating: <name>" status never
+// clears for the rest of the session.
+const REQUEST_TIMEOUT_MS = 120_000;
 
 function requestFromWorker(
   activeWorker: Worker,
   request: WorkerRequest,
 ): Promise<string> {
   return new Promise((resolve, reject) => {
-    pending.set(request.reqId, { resolve, reject });
-    activeWorker.postMessage(request);
+    const timeoutId = setTimeout(() => {
+      if (pending.delete(request.reqId)) {
+        reject(
+          new ThumbnailTransportError(
+            `Thumbnail worker request timed out after ${REQUEST_TIMEOUT_MS}ms`,
+          ),
+        );
+      }
+    }, REQUEST_TIMEOUT_MS);
+    pending.set(request.reqId, { resolve, reject, timeoutId });
+    try {
+      activeWorker.postMessage(request);
+    } catch (err) {
+      // postMessage can throw synchronously (e.g. a structured-clone
+      // failure, or a dead worker in some browser states) -- without this
+      // catch, that throw would escape the Promise executor and reject
+      // with the raw thrown value rather than a ThumbnailTransportError,
+      // letting a transient/environment failure masquerade as a permanent
+      // per-file failure the same way an unhandled `onerror` crash would.
+      pending.delete(request.reqId);
+      clearTimeout(timeoutId);
+      reject(
+        new ThumbnailTransportError(
+          `Failed to post thumbnail request to worker: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        ),
+      );
+    }
   });
 }
 
