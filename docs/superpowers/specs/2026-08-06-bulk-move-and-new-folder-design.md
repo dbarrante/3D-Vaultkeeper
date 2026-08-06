@@ -43,12 +43,12 @@ interface FolderPickerProps {
   models: STLModel[];
   trackedFolderPaths: string[];
   title: string; // e.g. "Move to folder" or "Choose a location for the new folder"
-  onSelect: (target: { mode: "logical"; folderId: string | null } | { mode: "file"; realPath: string }) => void;
+  onSelect: (target: { mode: "logical"; folderId: string | null } | { mode: "file"; realPath: string | null }) => void;
   onClose: () => void;
 }
 ```
 
-`onSelect`'s tagged union always matches the `viewMode` the picker was opened with — the tag exists so call sites can switch on it without an `in` check. The tree includes a selectable root node at the top — "Root" for logical, "Library Root" for file view — mirroring the existing "New Root Folder" affordance in Sidebar, so the picker can express every destination the current per-mode folder-creation UI already allows. Selecting it yields `{mode: "logical", folderId: null}` or `{mode: "file", realPath: <UPLOAD_DIR>}` (file view, using the same `parentPath: null` convention `POST /api/file-view/folder` already accepts).
+`onSelect`'s tagged union always matches the `viewMode` the picker was opened with — the tag exists so call sites can switch on it without an `in` check. The tree includes a selectable root node at the top — "Root" for logical, "Library Root" for file view — mirroring the existing "New Root Folder" affordance in Sidebar, so the picker can express every destination the current per-mode folder-creation UI already allows. Selecting it yields `{mode: "logical", folderId: null}` or `{mode: "file", realPath: null}` — `null` is deliberate, not a placeholder: it's the same "library root" convention `POST /api/file-view/folder`'s `parentPath: null` already uses, since the frontend has no other way to name the real UPLOAD_DIR path as a string. The file-view bulk-move endpoint (below) accepts the same `null`-means-root convention for consistency.
 
 **Three call sites:**
 1. Bulk "Move" — replaces `App.tsx:1643-1692`'s hardcoded flat list.
@@ -82,7 +82,7 @@ If step 1 fails (e.g. a 409 name collision), stop before attempting step 2 — t
 
 ### File view bulk move — one new endpoint
 
-`POST /api/file-view/models/bulk-move`, body `{ids: string[], targetPath: string}`, added to `backend/app/routers/file_view.py` (the router that already owns every other File-view-specific operation, per this codebase's established convention — see the reveal-in-Explorer endpoint added earlier today).
+`POST /api/file-view/models/bulk-move`, body `{ids: string[], targetPath: string | null}` (`null` means the library root — `UPLOAD_DIR` — same convention `FolderCreateRequest.parentPath` already uses), added to `backend/app/routers/file_view.py` (the router that already owns every other File-view-specific operation, per this codebase's established convention — see the reveal-in-Explorer endpoint added earlier today).
 
 Implementation loops each id, reusing the exact per-file logic `update_model_location` already has (`models.py:199-264`):
 - Resolve the model's current real path by `storageMode` (`sourcePath` if `reference`, else the resolved copy-mode file).
