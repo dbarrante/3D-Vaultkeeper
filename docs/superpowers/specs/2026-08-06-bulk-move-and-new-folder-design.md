@@ -91,13 +91,13 @@ Implementation loops each id, reusing the exact per-file logic `update_model_loc
 - 409 if `destination` already exists.
 - `shutil.move`, then update `filePath`/`sourcePath` in the DB; roll back the filesystem move if the DB write fails (same rollback pattern as `update_model_location`, including the "stranded file" log warning on double failure).
 
-Per the best-effort decision below, each id's failure is **caught, not raised** — the loop continues to the next id. Response:
+Per the best-effort decision below, each id's failure is **caught, not raised** — the loop continues to the next id. Response includes each moved model's new `filePath`, not just its id — the frontend needs this to optimistically update model state afterward, the same way the existing logical bulk-move already does by writing the new `folderId` onto each moved model in place (`App.tsx:832-836`) rather than refetching:
 
 ```json
-{ "moved": ["id1", "id2"], "failed": [{"id": "id3", "reason": "A file already exists at ..."}] }
+{ "moved": [{"id": "id1", "filePath": "C:\\...\\NewFolder\\model1.stl"}], "failed": [{"id": "id3", "reason": "A file already exists at ..."}] }
 ```
 
-`frontend/services/api.ts` gets a matching `bulkMoveFileViewModels(ids: string[], targetPath: string): Promise<{moved: string[], failed: {id: string, reason: string}[]}>`.
+`frontend/services/api.ts` gets a matching `bulkMoveFileViewModels(ids: string[], targetPath: string): Promise<{moved: {id: string, filePath: string}[], failed: {id: string, reason: string}[]}>`.
 
 ### Single-file File-view "Move" upgrade
 
