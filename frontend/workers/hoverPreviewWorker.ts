@@ -37,6 +37,7 @@ let currentSessionId: number | null = null;
 let currentFrameId: number | null = null;
 let currentRenderer: THREE.WebGLRenderer | null = null;
 let currentLiveObject: THREE.Object3D | null = null;
+let currentAbortController: AbortController | null = null;
 
 function stopCurrentSession() {
   if (currentFrameId !== null) {
@@ -46,6 +47,10 @@ function stopCurrentSession() {
   if (currentLiveObject) {
     disposeObject3D(currentLiveObject);
     currentLiveObject = null;
+  }
+  if (currentAbortController) {
+    currentAbortController.abort();
+    currentAbortController = null;
   }
   if (currentRenderer) {
     currentRenderer.dispose();
@@ -168,6 +173,23 @@ function startRendering(
   // throws without this false argument.
   renderer.setSize(width, height, false);
 
+  // Listen for WebGL context loss (e.g., device context swaps). The
+  // pre-worker HoverPreviewCanvas.tsx had this listener; without it, a lost
+  // context leaves the canvas permanently blank with no error. Since control
+  // of the canvas is transferred to this worker, only the worker can listen.
+  const contextLostHandler = () => {
+    if (currentSessionId !== sessionId) return; // not our session
+    stopCurrentSession();
+    currentSessionId = null;
+    const response: HoverWorkerResponse = {
+      type: "error",
+      sessionId,
+      message: "WebGL context lost",
+    };
+    (self as unknown as Worker).postMessage(response);
+  };
+  canvas.addEventListener("webglcontextlost", contextLostHandler);
+
   currentRenderer = renderer;
   currentLiveObject = object;
 
@@ -190,9 +212,12 @@ function startRendering(
 async function handleStart(msg: Extract<HoverWorkerRequest, { type: "start" }>) {
   stopCurrentSession();
   currentSessionId = msg.sessionId;
+  currentAbortController = new AbortController();
 
   try {
-    const response = await fetch(msg.url);
+    const response = await fetch(msg.url, {
+      signal: currentAbortController.signal,
+    });
     if (!response.ok) {
       throw new Error(
         `Failed to fetch model file for hover preview (${response.status} ${response.statusText}): ${msg.url}`,
@@ -214,11 +239,14 @@ async function handleStart(msg: Extract<HoverWorkerRequest, { type: "start" }>) 
     startRendering(object, msg.canvas, msg.sessionId);
   } catch (err) {
     if (currentSessionId !== msg.sessionId) return; // superseded, stay silent
+    // Guard AbortError so cancelled sessions don't report spurious errors.
+    if (err instanceof Error && err.name === "AbortError") return;
     const response: HoverWorkerResponse = {
       type: "error",
       sessionId: msg.sessionId,
       message: err instanceof Error ? err.message : String(err),
     };
+    stopCurrentSession();
     (self as unknown as Worker).postMessage(response);
   }
 }
