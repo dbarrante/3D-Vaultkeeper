@@ -42,6 +42,7 @@ function getWorker(): Worker | null {
       if (msg.type === "ready") {
         callbacks.onReady();
       } else {
+        console.warn(`[hoverPreviewClient] Hover preview failed: ${msg.message}`);
         callbacks.onError();
       }
     };
