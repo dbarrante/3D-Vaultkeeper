@@ -142,11 +142,12 @@ git commit -m "refactor: extract STEP geometry parsing into a framework-free sha
 ### Task 2: Build the thumbnail Web Worker
 
 **Files:**
+- Create: `frontend/lib/thumbnailScene.ts`
 - Create: `frontend/workers/thumbnailWorker.ts`
 
 **Interfaces:**
 - Consumes: `loadStepGeometryFromBuffer` (Task 1).
-- Produces: the worker's message contract, consumed by Task 3's client wrapper:
+- Produces: `buildThumbnailScene(object: THREE.Object3D): { scene: THREE.Scene; camera: THREE.PerspectiveCamera }` — used by this task's worker and by Task 3's fallback path, so the scene/camera/light setup (identical in both contexts) exists in exactly one place instead of being duplicated between the worker and the fallback. Also produces the worker's message contract, consumed by Task 3's client wrapper:
   ```typescript
   type WorkerRequest =
     | { reqId: number; kind: "url"; url: string; filename: string }
@@ -160,35 +161,21 @@ git commit -m "refactor: extract STEP geometry parsing into a framework-free sha
 
 This task is independently testable: the worker can be driven directly from a page via `new Worker(...)` + `postMessage`, without any changes to the rest of the app yet.
 
-- [ ] **Step 1: Write the worker**
+- [ ] **Step 1: Extract the shared scene-building helper**
+
+The scene/camera/light setup below is identical whether it runs in the worker (this task) or the main-thread fallback (Task 3) — only renderer construction and image encoding differ between those two contexts. Extracting it once here avoids ~30 lines of verbatim duplication between the two files.
 
 ```typescript
-// frontend/workers/thumbnailWorker.ts
+// frontend/lib/thumbnailScene.ts
 import * as THREE from "three";
-import { STLLoader } from "three/examples/jsm/loaders/STLLoader.js";
-import { ThreeMFLoader } from "three/examples/jsm/loaders/3MFLoader.js";
-import { loadStepGeometryFromBuffer } from "../lib/stepGeometry";
 
-type WorkerRequest =
-  | { reqId: number; kind: "url"; url: string; filename: string }
-  | { reqId: number; kind: "blob"; blob: Blob; filename: string };
-
-type WorkerResponse =
-  | { reqId: number; ok: true; thumbnail: string }
-  | { reqId: number; ok: false; kind: "transport" | "render"; message: string };
-
-class ThumbnailTransportErrorInWorker extends Error {}
-
-function blobToDataUrl(blob: Blob): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result as string);
-    reader.onerror = () => reject(reader.error);
-    reader.readAsDataURL(blob);
-  });
-}
-
-async function renderObjectToDataUrl(object: THREE.Object3D): Promise<string> {
+// Framework-free (pure THREE.js object construction, no canvas/renderer/DOM
+// dependency) so this module is safe to import from both a Web Worker
+// (frontend/workers/thumbnailWorker.ts) and the main thread (the
+// synchronous fallback in frontend/services/thumbnailGenerator.ts).
+export function buildThumbnailScene(
+  object: THREE.Object3D,
+): { scene: THREE.Scene; camera: THREE.PerspectiveCamera } {
   const scene = new THREE.Scene();
   const box = new THREE.Box3();
   box.setFromObject(object);
@@ -218,6 +205,44 @@ async function renderObjectToDataUrl(object: THREE.Object3D): Promise<string> {
   backLight.position.set(-5, -5, -10);
   scene.add(backLight);
 
+  camera.lookAt(center);
+
+  return { scene, camera };
+}
+```
+
+- [ ] **Step 2: Write the worker**
+
+```typescript
+// frontend/workers/thumbnailWorker.ts
+import * as THREE from "three";
+import { STLLoader } from "three/examples/jsm/loaders/STLLoader.js";
+import { ThreeMFLoader } from "three/examples/jsm/loaders/3MFLoader.js";
+import { loadStepGeometryFromBuffer } from "../lib/stepGeometry";
+import { buildThumbnailScene } from "../lib/thumbnailScene";
+
+type WorkerRequest =
+  | { reqId: number; kind: "url"; url: string; filename: string }
+  | { reqId: number; kind: "blob"; blob: Blob; filename: string };
+
+type WorkerResponse =
+  | { reqId: number; ok: true; thumbnail: string }
+  | { reqId: number; ok: false; kind: "transport" | "render"; message: string };
+
+class ThumbnailTransportErrorInWorker extends Error {}
+
+function blobToDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result as string);
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(blob);
+  });
+}
+
+async function renderObjectToDataUrl(object: THREE.Object3D): Promise<string> {
+  const { scene, camera } = buildThumbnailScene(object);
+
   const canvas = new OffscreenCanvas(300, 300);
   const renderer = new THREE.WebGLRenderer({
     canvas: canvas as unknown as HTMLCanvasElement,
@@ -229,7 +254,6 @@ async function renderObjectToDataUrl(object: THREE.Object3D): Promise<string> {
   // canvas.style -- OffscreenCanvas has no .style property (it's not a DOM
   // element) and setSize() throws without this false argument.
   renderer.setSize(300, 300, false);
-  camera.lookAt(center);
   renderer.render(scene, camera);
 
   // OffscreenCanvas has no toDataURL() (that's HTMLCanvasElement-only) --
@@ -328,12 +352,12 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
 };
 ```
 
-- [ ] **Step 2: Verify it compiles clean**
+- [ ] **Step 3: Verify it compiles clean**
 
 Run: `cd frontend && bunx tsc --noEmit`
-Expected: same pre-existing baseline errors as Task 1's Step 3, no new errors from `thumbnailWorker.ts`.
+Expected: same pre-existing baseline errors as Task 1's Step 3, no new errors from `thumbnailScene.ts` or `thumbnailWorker.ts`.
 
-- [ ] **Step 3: Verify the worker in isolation with a real render**
+- [ ] **Step 4: Verify the worker in isolation with a real render**
 
 No app wiring exists yet (that's Task 3) — drive the worker directly from a throwaway HTML page served by the dev server, so this task's correctness doesn't depend on unfinished later tasks.
 
@@ -471,10 +495,10 @@ print("PASS -- saved to worker_cube_test.png, view it to confirm it's a rendered
 
 3. Run it, then use the Read tool on the saved PNG to visually confirm it shows an actual rendered cube (visible shading/edges), not a blank or solid-color image.
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
-git add frontend/workers/thumbnailWorker.ts
+git add frontend/lib/thumbnailScene.ts frontend/workers/thumbnailWorker.ts
 git commit -m "feat: add Web Worker for off-main-thread thumbnail generation"
 ```
 
@@ -486,7 +510,7 @@ git commit -m "feat: add Web Worker for off-main-thread thumbnail generation"
 - Modify: `frontend/services/thumbnailGenerator.ts` (full rewrite)
 
 **Interfaces:**
-- Consumes: Task 2's worker (`frontend/workers/thumbnailWorker.ts`) and its message contract; Task 1's `loadStepGeometryFromBuffer` (for the fallback path).
+- Consumes: Task 2's worker (`frontend/workers/thumbnailWorker.ts`) and its message contract; Task 2's `buildThumbnailScene` (for the fallback path's scene/camera/light setup); Task 1's `loadStepGeometryFromBuffer` (for the fallback path's STEP parsing).
 - Produces: `generateThumbnail(file: File): Promise<string>`, `generateThumbnailFromUrl(url: string, filename: string): Promise<string>`, `generateThumbnailFromArrayBuffer(contents: ArrayBuffer, filename: string): Promise<string>`, `class ThumbnailTransportError extends Error` — identical signatures to what exists today, consumed unchanged by `App.tsx:178,535,661` and `DetailPanel.tsx:196`.
 
 - [ ] **Step 1: Replace the file's contents**
@@ -497,6 +521,7 @@ import * as THREE from "three";
 import { STLLoader } from "three/examples/jsm/loaders/STLLoader.js";
 import { ThreeMFLoader } from "three/examples/jsm/loaders/3MFLoader.js";
 import { loadStepGeometryFromBuffer } from "@/lib/stepGeometry";
+import { buildThumbnailScene } from "@/lib/thumbnailScene";
 
 export class ThumbnailTransportError extends Error {
   constructor(message: string) {
@@ -587,34 +612,7 @@ function requestFromWorker(
 // unsupported WebView2 runtime instead of breaking outright.
 
 function renderObjectToDataUrlSync(object: THREE.Object3D): string {
-  const scene = new THREE.Scene();
-  const box = new THREE.Box3();
-  box.setFromObject(object);
-  scene.add(object);
-
-  const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 10000);
-  camera.up.set(0.0, -1.0, 0.0);
-
-  const center = box.getCenter(new THREE.Vector3());
-  const size = box.getSize(new THREE.Vector3());
-
-  const maxDim = Math.max(size.x, size.y, size.z);
-  const fov = camera.fov * (Math.PI / 180);
-  let cameraZ = Math.abs(maxDim / 2 / Math.tan(fov / 2));
-  cameraZ *= 3.5;
-  camera.position.set(center.x, center.y, cameraZ);
-
-  const ambientLight = new THREE.AmbientLight(0xffffff, 0.7);
-  scene.add(ambientLight);
-
-  const dirLight = new THREE.DirectionalLight(0xffffff, 1.0);
-  dirLight.position.set(camera.position.x, camera.position.y, camera.position.z);
-  dirLight.lookAt(center);
-  scene.add(dirLight);
-
-  const backLight = new THREE.DirectionalLight(0xffffff, 0.5);
-  backLight.position.set(-5, -5, -10);
-  scene.add(backLight);
+  const { scene, camera } = buildThumbnailScene(object);
 
   const renderer = new THREE.WebGLRenderer({
     alpha: true,
@@ -622,7 +620,6 @@ function renderObjectToDataUrlSync(object: THREE.Object3D): string {
     preserveDrawingBuffer: true,
   });
   renderer.setSize(300, 300);
-  camera.lookAt(center);
   renderer.render(scene, camera);
 
   const dataUrl = renderer.domElement.toDataURL("image/png");
