@@ -161,6 +161,16 @@ const ModelList: React.FC<ModelListProps> = ({
     }
   };
 
+  const handleRevealFile = async (model: STLModel) => {
+    if (!model.filePath) return;
+    try {
+      await api.revealInExplorer(model.filePath);
+    } catch (err) {
+      console.error("Reveal in File Explorer failed:", err);
+      alert(err instanceof Error ? err.message : "Reveal in File Explorer failed");
+    }
+  };
+
   const fileInputRef = useRef<HTMLInputElement>(null);
   // VirtuosoGrid virtualizes the file grid within this component's own
   // scroll container (rather than owning its own), since the header/search
@@ -1025,6 +1035,14 @@ const ModelList: React.FC<ModelListProps> = ({
           fileContextMenu ? { top: fileContextMenu.mouseY, left: fileContextMenu.mouseX } : undefined
         }
       >
+        <MenuItem
+          onClick={() => {
+            if (fileContextMenu) handleRevealFile(fileContextMenu.model);
+            setFileContextMenu(null);
+          }}
+        >
+          Open in File Explorer
+        </MenuItem>
         <MenuItem
           onClick={() => {
             if (fileContextMenu) handleRenameFile(fileContextMenu.model);

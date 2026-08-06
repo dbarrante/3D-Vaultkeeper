@@ -292,6 +292,18 @@ export const api = {
     return res.json();
   },
 
+  revealInExplorer: async (path: string): Promise<void> => {
+    const res = await fetch(`${getApiBaseUrl()}/file-view/reveal`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path }),
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.detail || "Failed to reveal in File Explorer");
+    }
+  },
+
   createFileViewFolder: async (
     parentPath: string | null,
     name: string,

@@ -852,6 +852,20 @@ const Sidebar: React.FC<SidebarProps> = ({
         </MenuItem>
         {folderContextMenu !== null && folderContextMenu.realPath !== null && [
           <MenuItem
+            key="reveal"
+            onClick={() => {
+              if (folderContextMenu?.realPath) {
+                api.revealInExplorer(folderContextMenu.realPath).catch((err) => {
+                  console.error("Reveal in File Explorer failed:", err);
+                  alert(err instanceof Error ? err.message : "Reveal in File Explorer failed");
+                });
+              }
+              setFolderContextMenu(null);
+            }}
+          >
+            Open in File Explorer
+          </MenuItem>,
+          <MenuItem
             key="rename"
             onClick={() => {
               if (folderContextMenu?.realPath) handleRenameFileViewFolder(folderContextMenu.nodeId, folderContextMenu.realPath);
