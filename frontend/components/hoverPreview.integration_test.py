@@ -8,22 +8,31 @@
 # than a synthetic DOM-only test, since that is how the original main-thread
 # freeze bug was found in the first place.
 #
-# MUST be run against a PRODUCTION build (`bun run build` + `bun run
-# preview`), NOT `bun run dev`. This is not a style preference: React's
-# <React.StrictMode> (frontend/index.tsx) double-invokes every effect in
-# development (mount -> cleanup -> mount) as a diagnostic. HoverPreviewCanvas
-# calls canvas.transferControlToOffscreen() in that effect, and canvas
-# transfer is one-way and permanent -- so StrictMode's second invocation
-# throws "Cannot transfer control from a canvas for more than one time" on
-# literally every hover, every time, in dev. It fails closed (falls back to
-# the static thumbnail, no crash), so nothing looks obviously broken in dev
-# -- hover preview just silently never renders. This is confirmed empirically
-# (see this plan's Task 3 report) and is inherent to the offscreen-canvas
-# architecture combined with StrictMode's dev-only diagnostic; it does not
-# reproduce in a production build, which is what real users (including the
-# desktop app) actually run. See the Task 3 report for the full writeup and
-# for a related, NOT StrictMode-only, finding about the same effect's
-# dependency array.
+# SHOULD be run against a PRODUCTION build (`bun run build` + `bun run
+# preview`) for the RESPONSIVENESS assertion (Test 1's max-frame-gap < 200ms)
+# to be meaningful -- `bun run dev` serves unminified, unbundled ES modules
+# with Vite's dev-time transform/HMR overhead, which measured a 331ms max
+# frame gap in dev vs. 34ms in a production build for the identical fixture
+# and identical code -- that's expected dev-mode noise, not a regression.
+#
+# HISTORICAL NOTE, now resolved: an earlier version of HoverPreviewCanvas.tsx
+# declared its <canvas> directly in JSX (a single persistent DOM element
+# reused across every effect re-invocation), which meant React StrictMode's
+# dev-only double-effect-invocation (mount -> cleanup -> mount) called
+# canvas.transferControlToOffscreen() -- a one-way, permanent operation --
+# TWICE on the same element, throwing "Cannot transfer control from a canvas
+# for more than one time" on literally every hover in `bun run dev` (it
+# failed closed, silently falling back to the static thumbnail -- see the
+# Task 3 report's original Finding 2). The canvas-aspect-ratio fix (see
+# HoverPreviewCanvas.tsx's effect) also creates the <canvas> element
+# IMPERATIVELY inside the effect instead, so every invocation -- including
+# StrictMode's second one -- gets a genuinely fresh, never-before-transferred
+# element. Confirmed empirically (re-tested against `bun run dev` after that
+# fix): hover preview now renders correctly in dev mode too, first hover and
+# on re-hover alike, with no transfer error. Dev mode is still not the
+# REQUIRED environment for this suite -- only because Test 1's responsiveness
+# threshold isn't meaningful under dev's unrelated performance overhead, not
+# because of any remaining canvas-transfer issue.
 #
 # Assumes a backend is already running:
 #   cd backend && ./run.sh                      (or the equivalent uvicorn
@@ -112,12 +121,19 @@ def upload_fixture(page, fixture_path, folder_id):
 
 
 def canvas_visible(page):
+    # Post canvas-sizing-fix, HoverPreviewCanvas.tsx creates the <canvas>
+    # imperatively and toggles visibility via an inline
+    # `canvas.style.visibility = "hidden"/"visible"` (not a Tailwind
+    # 'invisible' class, which is what this helper originally checked --
+    # that class check would have silently always returned true here, since
+    # the imperative canvas never carries that class). Checking computed
+    # style is what actually reflects the ready/not-ready state now.
     return page.evaluate(
         """
         () => {
             const canvases = document.querySelectorAll('canvas');
             for (const c of canvases) {
-                if (!c.classList.contains('invisible') && c.offsetHeight > 0) return true;
+                if (getComputedStyle(c).visibility !== 'hidden' && c.offsetHeight > 0) return true;
             }
             return false;
         }
@@ -129,7 +145,7 @@ def visible_canvas_count(page):
     return page.evaluate(
         """
         () => Array.from(document.querySelectorAll('canvas'))
-            .filter(c => !c.classList.contains('invisible') && c.offsetHeight > 0)
+            .filter(c => getComputedStyle(c).visibility !== 'hidden' && c.offsetHeight > 0)
             .length
         """
     )
@@ -292,6 +308,51 @@ def main():
                 fmt_card.hover()
                 page.wait_for_timeout(3000)
                 assert canvas_visible(page), f"expected a live preview for {fixture['name']}"
+
+                # --- Canvas aspect-ratio check (regression coverage for the
+                # square-canvas-stretched-into-a-non-square-card bug caught
+                # in review): the card is h-60 (240px tall) / w-full
+                # (variable width) -- never square, never 600x600. Confirm
+                # the live canvas's actual PIXEL BUFFER (the .width/.height
+                # attributes set once, at creation, before
+                # transferControlToOffscreen() -- not the CSS box, which is
+                # always stretched to 100%/100% by design) now reflects the
+                # card's real aspect ratio instead of a hardcoded square.
+                aspect_info = page.evaluate(
+                    """
+                    () => {
+                        const canvases = Array.from(document.querySelectorAll('canvas'))
+                            .filter(c => getComputedStyle(c).visibility !== 'hidden' && c.offsetHeight > 0);
+                        const c = canvases[0];
+                        if (!c) return null;
+                        const container = c.parentElement;
+                        return {
+                            canvasWidth: c.width,
+                            canvasHeight: c.height,
+                            containerClientWidth: container.clientWidth,
+                            containerClientHeight: container.clientHeight,
+                        };
+                    }
+                    """
+                )
+                assert aspect_info is not None, f"expected a locatable live canvas element for {fixture['name']}"
+                assert not (aspect_info["canvasWidth"] == 600 and aspect_info["canvasHeight"] == 600), (
+                    f"canvas pixel buffer is still hardcoded 600x600 for {fixture['name']} -- "
+                    "the square-canvas-stretched-into-a-non-square-card regression is back"
+                )
+                canvas_ratio = aspect_info["canvasWidth"] / aspect_info["canvasHeight"]
+                container_ratio = aspect_info["containerClientWidth"] / aspect_info["containerClientHeight"]
+                assert abs(canvas_ratio - container_ratio) < 0.05, (
+                    f"canvas aspect ratio {canvas_ratio:.3f} does not match container aspect ratio "
+                    f"{container_ratio:.3f} for {fixture['name']} ({aspect_info}) -- render would be visibly "
+                    "distorted (e.g. a sphere rendering as an ellipse) when CSS stretches the canvas to fill "
+                    "its non-square box"
+                )
+                print(
+                    f"  {fixture['name']}: canvas {aspect_info['canvasWidth']}x{aspect_info['canvasHeight']} "
+                    f"(ratio {canvas_ratio:.3f}) matches container ratio {container_ratio:.3f} -- PASSED"
+                )
+
                 page.mouse.move(5, 5)
                 page.wait_for_timeout(500)
 

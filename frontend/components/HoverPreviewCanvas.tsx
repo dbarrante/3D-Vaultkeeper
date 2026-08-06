@@ -21,7 +21,6 @@ const HoverPreviewCanvas: React.FC<{
   onError: () => void;
 }> = ({ model, onError }) => {
   const mountRef = useRef<HTMLDivElement>(null);
-  const canvasRef = useRef<HTMLCanvasElement>(null);
   const [ready, setReady] = useState(false);
 
   // Kept in a ref so a parent re-render passing a fresh onError closure
@@ -31,21 +30,45 @@ const HoverPreviewCanvas: React.FC<{
   onErrorRef.current = onError;
 
   useEffect(() => {
-    if (!canvasRef.current) return;
+    if (!mountRef.current) return;
     setReady(false);
+    const el = mountRef.current;
+
+    const canvas = document.createElement("canvas");
+    // Size the transferred canvas's pixel buffer to match this card's
+    // actual rendered box -- must happen here, before startHoverPreview
+    // (which calls transferControlToOffscreen() internally), since a
+    // transferred canvas's width/height can no longer be set from the
+    // main thread afterward. Matches the pre-worker code's use of
+    // clientWidth/clientHeight for camera-aspect framing -- without this,
+    // the worker's fixed-square camera aspect gets stretched by CSS into
+    // this card's non-square box, visibly distorting the render (spheres
+    // render as ellipses).
+    const width = el.clientWidth || 300;
+    const height = el.clientHeight || 300;
+    canvas.width = width;
+    canvas.height = height;
+    canvas.style.width = "100%";
+    canvas.style.height = "100%";
+    canvas.style.visibility = "hidden";
+    el.appendChild(canvas);
 
     const fileUrl = resolveApiOrigin() + model.url;
     const handle = startHoverPreview(
-      canvasRef.current,
+      canvas,
       { url: fileUrl, name: model.name },
       {
-        onReady: () => setReady(true),
+        onReady: () => {
+          canvas.style.visibility = "visible";
+          setReady(true);
+        },
         onError: () => onErrorRef.current(),
       },
     );
 
     return () => {
       handle.cancel();
+      el.removeChild(canvas);
     };
   }, [model.id, model.url, model.name]);
 
@@ -55,7 +78,13 @@ const HoverPreviewCanvas: React.FC<{
           frame is ready -- this component owns its own loading state rather
           than the parent showing/hiding it, since ModelList.tsx's ternary
           already hard-swaps this component in on hover (see ModelList.tsx
-          around the isHoverPreviewEligible check). */}
+          around the isHoverPreviewEligible check). The live canvas itself is
+          created imperatively in the effect above (not declared here in
+          JSX) -- see that effect's comment for why: it needs the container's
+          real clientWidth/clientHeight before transferControlToOffscreen()
+          is called, and creating a fresh element per effect invocation
+          means every mount (including React StrictMode's dev-only second
+          invocation) gets a canvas that was never transferred before. */}
       {!ready &&
         (model.thumbnail ? (
           <CardMedia
@@ -74,12 +103,6 @@ const HoverPreviewCanvas: React.FC<{
           <div className="w-6 h-6 rounded-full border-2 border-vault-700 border-t-blue-500 animate-spin" />
         </div>
       )}
-      <canvas
-        ref={canvasRef}
-        width={600}
-        height={600}
-        className={`h-60 w-full absolute inset-0 ${ready ? "" : "invisible"}`}
-      />
     </div>
   );
 };
