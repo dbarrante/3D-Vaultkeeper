@@ -1,5 +1,6 @@
 import os
 import shutil
+import subprocess
 from pathlib import Path
 from typing import Optional
 
@@ -268,3 +269,19 @@ def get_tracked_folders():
     finally:
         conn.close()
     return {"paths": [row["path"] for row in rows]}
+
+
+class RevealRequest(BaseModel):
+    path: str
+
+
+@router.post("/reveal")
+def reveal_in_explorer(body: RevealRequest):
+    target = Path(body.path)
+    if not target.exists():
+        raise HTTPException(status_code=404, detail=f"Path not found: {body.path}")
+    if target.is_dir():
+        subprocess.Popen(["explorer", str(target)])
+    else:
+        subprocess.Popen(["explorer", "/select,", str(target)])
+    return {"ok": True}
