@@ -25,6 +25,13 @@ export default defineConfig(({ mode }) => {
       "import.meta.env.VITE_API_URL": JSON.stringify(API_URL),
     },
     plugins: [react()],
+    // The thumbnail worker (frontend/workers/thumbnailWorker.ts) is
+    // constructed with { type: "module" } and pulls in three +
+    // occt-import-js, so its bundle code-splits. Vite's default
+    // worker.format of "iife" cannot emit multi-chunk worker output and
+    // fails the build outright; "es" is required for module workers with
+    // real dependencies like this one.
+    worker: { format: "es" },
     resolve: {
       alias: {
         "@": path.resolve(__dirname, "."),
