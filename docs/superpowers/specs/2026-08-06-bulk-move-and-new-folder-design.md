@@ -43,18 +43,19 @@ interface FolderPickerProps {
   models: STLModel[];
   trackedFolderPaths: string[];
   title: string; // e.g. "Move to folder" or "Choose a location for the new folder"
-  onSelect: (target: { folderId: string | null } | { realPath: string }) => void;
+  onSelect: (target: { mode: "logical"; folderId: string | null } | { mode: "file"; realPath: string }) => void;
   onClose: () => void;
 }
 ```
 
-The tree includes a selectable root node at the top — "Root" for logical, "Library Root" for file view — mirroring the existing "New Root Folder" affordance in Sidebar, so the picker can express every destination the current per-mode folder-creation UI already allows. Selecting it yields `{folderId: null}` (logical) or `{realPath: <UPLOAD_DIR>}` (file view, using the same `parentPath: null` convention `POST /api/file-view/folder` already accepts).
+`onSelect`'s tagged union always matches the `viewMode` the picker was opened with — the tag exists so call sites can switch on it without an `in` check. The tree includes a selectable root node at the top — "Root" for logical, "Library Root" for file view — mirroring the existing "New Root Folder" affordance in Sidebar, so the picker can express every destination the current per-mode folder-creation UI already allows. Selecting it yields `{mode: "logical", folderId: null}` or `{mode: "file", realPath: <UPLOAD_DIR>}` (file view, using the same `parentPath: null` convention `POST /api/file-view/folder` already accepts).
 
-**Four call sites:**
+**Three call sites:**
 1. Bulk "Move" — replaces `App.tsx:1643-1692`'s hardcoded flat list.
 2. Bulk "Move to New Folder" — used for the parent-location step (see below).
 3. Single File-view folder "Move" in the sidebar context menu — replaces the `window.prompt` at `Sidebar.tsx:877-899`.
-4. (No fourth call site — Upload-to-folder modal and Import Wizard are out of scope, per above.)
+
+(Upload-to-folder modal and Import Wizard are separate flows, out of scope per above — not additional call sites.)
 
 ### Bulk action bar
 
