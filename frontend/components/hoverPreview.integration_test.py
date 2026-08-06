@@ -28,11 +28,13 @@
 # Assumes a backend is already running:
 #   cd backend && ./run.sh                      (or the equivalent uvicorn
 #                                                  invocation for this OS)
-# and a production build is built and served:
+# and a production build is built and served on port 4174 (NOT vite's
+# default preview port, 5173 -- vite.config.ts pins preview.port to 5173,
+# which in practice is frequently already occupied by an unrelated
+# dev-server instance of this same app; 4174 is what this script's default
+# below actually points at, so use it unless you also override
+# HOVER_TEST_FRONTEND_URL to match whatever port you chose instead):
 #   cd frontend && bun run build && bun run preview -- --port 4174
-#   (vite.config.ts pins preview.port to 5173, which may already be in use
-#   by an unrelated dev-server instance -- pass an explicit free port at the
-#   CLI rather than editing the config.)
 #
 # Fixtures must exist first (see generate_fixtures.py -- the two
 # *-threshold-*.stl files are gitignored and regenerated locally, not
@@ -41,8 +43,15 @@
 #   python public/test-fixtures/generate_fixtures.py     (from frontend/)
 #
 # Configurable via env vars:
-#   HOVER_TEST_FRONTEND_URL  (default http://localhost:5173 -- override to
-#                              match whatever port `bun run preview` chose)
+#   HOVER_TEST_FRONTEND_URL  (default http://localhost:4174 -- MUST match
+#                              whatever port `bun run preview` actually
+#                              bound to; check its terminal output. This
+#                              script only checks that the page landed on
+#                              whatever URL you told it to expect -- it
+#                              cannot detect "the right app, wrong port"
+#                              from the inside, so a stale/wrong value here
+#                              would silently test some other running
+#                              instance instead of your freshly built one.)
 #   HOVER_TEST_BACKEND_URL   (default http://localhost:8000)
 #
 # Run: python components/hoverPreview.integration_test.py
@@ -52,7 +61,7 @@ import time
 import urllib.request
 from playwright.sync_api import sync_playwright
 
-FRONTEND_URL = os.environ.get("HOVER_TEST_FRONTEND_URL", "http://localhost:5173")
+FRONTEND_URL = os.environ.get("HOVER_TEST_FRONTEND_URL", "http://localhost:4174")
 BACKEND_URL = os.environ.get("HOVER_TEST_BACKEND_URL", "http://localhost:8000")
 
 
@@ -255,9 +264,12 @@ def main():
             # STL and STEP should each produce a visible, non-blank
             # live-preview canvas within a few seconds.
             #
-            # 3MF is a KNOWN, CONFIRMED-BROKEN case, not yet fixed -- see the
-            # Task 3 report (docs/superpowers/sdd/
-            # 2026-08-06-hover-preview-worker-offload/task-3-report.md).
+            # 3MF is a KNOWN, CONFIRMED-BROKEN case, not yet fixed -- full
+            # writeup in the Task 3 report at .superpowers/sdd/
+            # 2026-08-06-hover-preview-worker-offload/task-3-report.md
+            # (that path is gitignored -- local to this repo checkout only,
+            # not guaranteed to exist for other clones -- so the root cause
+            # is repeated in full below rather than only linked).
             # Root cause: three.js's ThreeMFLoader.parse() calls
             # `new DOMParser().parseFromString(...)` unconditionally
             # (node_modules/three/examples/jsm/loaders/3MFLoader.js:215,273),
