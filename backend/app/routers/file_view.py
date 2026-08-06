@@ -1,6 +1,7 @@
 import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 from typing import Optional
 
@@ -277,6 +278,25 @@ class RevealRequest(BaseModel):
 
 @router.post("/reveal")
 def reveal_in_explorer(body: RevealRequest):
+    # This project's recommended deployment is Docker (Linux), where
+    # explorer.exe doesn't exist and Popen would raise an uncaught
+    # FileNotFoundError -> 500. Mirrors watcher.py's TKINTER_AVAILABLE /
+    # run_folder_dialog_isolated precedent of reporting a clean 503 for a
+    # platform-unavailable feature instead of crashing.
+    if not sys.platform.startswith("win"):
+        raise HTTPException(
+            status_code=503,
+            detail="Opening File Explorer is only available when the server runs on Windows.",
+        )
+
+    # Same path-safety convention as rename/move/create_folder above: a
+    # relative body.path would otherwise silently resolve against the
+    # backend's cwd instead of being rejected.
+    try:
+        ensure_unambiguous_path(body.path)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
     target = Path(body.path)
     if not target.exists():
         raise HTTPException(status_code=404, detail=f"Path not found: {body.path}")
