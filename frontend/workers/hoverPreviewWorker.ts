@@ -247,6 +247,7 @@ async function handleStart(msg: Extract<HoverWorkerRequest, { type: "start" }>) 
       message: err instanceof Error ? err.message : String(err),
     };
     stopCurrentSession();
+    currentSessionId = null;
     (self as unknown as Worker).postMessage(response);
   }
 }
