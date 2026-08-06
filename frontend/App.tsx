@@ -246,13 +246,17 @@ const App = () => {
   }, []);
 
   // Derived progress for the bottom status bar above: eligible models are
-  // the same STL/3MF/STEP-only, non-permanently-failed set the loop above
-  // and the backend's thumbnail-queue endpoint both use, so "complete vs
-  // left to populate" always matches what the loop is actually working
-  // through. Reuses the already-loaded `models` state -- no extra request.
+  // the same STL/3MF/STEP-only, non-permanently-failed, non-missing set the
+  // loop above and the backend's thumbnail-queue endpoint both use, so
+  // "complete vs left to populate" always matches what the loop is actually
+  // working through. Reuses the already-loaded `models` state -- no extra
+  // request. The `missing` exclusion matters: a reference-mode model whose
+  // source file is gone will never get a thumbnail (the backend correctly
+  // excludes it from the queue), so counting it as eligible-but-incomplete
+  // pins `remaining` above zero forever and the bar never disappears.
   const thumbnailStats = useMemo(() => {
     const eligible = models.filter((m) => {
-      if (m.thumbnailFailed) return false;
+      if (m.thumbnailFailed || m.missing) return false;
       const lower = m.name.toLowerCase();
       return (
         lower.endsWith(".stl") ||
