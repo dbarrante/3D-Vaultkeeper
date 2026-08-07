@@ -14,6 +14,28 @@ export interface FolderTree {
   realPaths?: Map<string, string>;
 }
 
+// Preserves a POSIX-absolute path's leading slash through the
+// split("/").filter(s => s.length > 0).join("/") round-trip used below to
+// rebuild realPaths, which otherwise silently drops it: "/app/uploads/Foo"
+// splits to ["", "app", "uploads", "Foo"], and filtering out empty segments
+// strips the leading "" -- so the rejoined path becomes "app/uploads/Foo",
+// now relative. That's a real bug in this app's Linux Docker deployment: a
+// relative destination is correctly rejected by ensure_unambiguous_path with
+// a 400, so any File-view destination picked from this tree would fail
+// there. Windows-style paths (e.g. "C:\...") must keep reconstructing
+// without a leading slash exactly as before, so this only ever prefixes a
+// path that was genuinely POSIX-absolute to begin with. Note: a UNC path
+// (\\server\share\...) also starts with "/" once backslashes are
+// normalized, so it gets a single leading slash here rather than the double
+// slash a real UNC root needs -- still an improvement over losing it
+// entirely, but not a complete fix for that pre-existing edge case.
+function posixAbsolutePrefix(rawPath: string): string {
+  const normalized = rawPath.replace(/\\/g, "/");
+  if (normalized.startsWith("//")) return "//";
+  if (normalized.startsWith("/")) return "/";
+  return "";
+}
+
 // Builds the folder tree RichTreeView renders, in either view mode. Lifted
 // verbatim from Sidebar.tsx's former treefolders()/fileTree so the sidebar
 // and the FolderPicker dialog read from one source of truth instead of two
@@ -26,28 +48,38 @@ export function useFolderTree(
 ): FolderTree {
   return useMemo(() => {
     if (viewMode === "logical") {
-      const rootFolders = folders.filter((f) => f.parentId === null);
-      const treeitems: TreeViewDefaultItemModelProperties[] = [];
-      rootFolders.map((folder) => {
-        treeitems.push({
-          id: folder.id,
-          label: folder.name,
-          children: [],
-        });
+      // Index children by parentId once, then recurse from the root folders
+      // to arbitrary depth. The old code only ever attached direct children
+      // of root folders (a second, flat pass over `folders`), so anything
+      // nested 3+ levels deep structurally could not appear in the tree. This
+      // is a pure capability extension: root selection (parentId === null)
+      // and the sort order at every level are unchanged from before.
+      const childrenByParentId = new Map<string, Folder[]>();
+      folders.forEach((f) => {
+        if (f.parentId === null) return;
+        const siblings = childrenByParentId.get(f.parentId) ?? [];
+        siblings.push(f);
+        childrenByParentId.set(f.parentId, siblings);
       });
-      treeitems.map((folder) => {
-        folders.map((subfolder) => {
-          if (subfolder.parentId === folder.id) {
-            folder.children.push({ id: subfolder.id, label: subfolder.name });
-          }
-        });
-        folder.children.sort((a, b) => {
-          return a.label.localeCompare(b.label);
-        });
-      });
-      treeitems.sort((a, b) => {
-        return a.label.localeCompare(b.label);
-      });
+
+      // Guards against a corrupt parentId cycle (e.g. a self-parented row, or
+      // A -> B -> A) sending this into infinite recursion. Such a cycle can't
+      // happen through this app's own folder-creation endpoints, but nothing
+      // stops a manually edited DB row from creating one, and an infinite
+      // recursion here would hang the whole Sidebar/FolderPicker render.
+      const buildNode = (folder: Folder, visited: Set<string>): TreeViewDefaultItemModelProperties => {
+        const nextVisited = new Set(visited).add(folder.id);
+        const children = (childrenByParentId.get(folder.id) ?? [])
+          .filter((child) => !nextVisited.has(child.id))
+          .map((child) => buildNode(child, nextVisited))
+          .sort((a, b) => a.label.localeCompare(b.label));
+        return { id: folder.id, label: folder.name, children };
+      };
+
+      const treeitems = folders
+        .filter((f) => f.parentId === null)
+        .map((folder) => buildNode(folder, new Set()))
+        .sort((a, b) => a.label.localeCompare(b.label));
       return { items: treeitems };
     }
 
@@ -75,6 +107,7 @@ export function useFolderTree(
       const rawSegments = m.filePath.replace(/\\/g, "/").split("/").filter((s) => s.length > 0);
       rawSegments.pop();
       const dropped = rawSegments.length - meaningfulSegments.length;
+      const absolutePrefix = posixAbsolutePrefix(m.filePath);
 
       let cursor = root;
       let idPath = "file";
@@ -84,7 +117,7 @@ export function useFolderTree(
           const node: FileNode = { id: idPath, label: segment, children: [], childMap: {} };
           cursor.childMap[segment] = node;
           cursor.children.push(node);
-          realPaths.set(idPath, rawSegments.slice(0, dropped + index + 1).join("/"));
+          realPaths.set(idPath, absolutePrefix + rawSegments.slice(0, dropped + index + 1).join("/"));
         }
         cursor = cursor.childMap[segment];
       });
@@ -96,6 +129,7 @@ export function useFolderTree(
       if (meaningfulSegments.length === 0) meaningfulSegments = rawSegments;
 
       const dropped = rawSegments.length - meaningfulSegments.length;
+      const absolutePrefix = posixAbsolutePrefix(trackedPath);
 
       let cursor = root;
       let idPath = "file";
@@ -105,7 +139,7 @@ export function useFolderTree(
           const node: FileNode = { id: idPath, label: segment, children: [], childMap: {} };
           cursor.childMap[segment] = node;
           cursor.children.push(node);
-          realPaths.set(idPath, rawSegments.slice(0, dropped + index + 1).join("/"));
+          realPaths.set(idPath, absolutePrefix + rawSegments.slice(0, dropped + index + 1).join("/"));
         }
         cursor = cursor.childMap[segment];
       });
