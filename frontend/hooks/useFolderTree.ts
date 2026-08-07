@@ -24,11 +24,10 @@ export interface FolderTree {
 // a 400, so any File-view destination picked from this tree would fail
 // there. Windows-style paths (e.g. "C:\...") must keep reconstructing
 // without a leading slash exactly as before, so this only ever prefixes a
-// path that was genuinely POSIX-absolute to begin with. Note: a UNC path
-// (\\server\share\...) also starts with "/" once backslashes are
-// normalized, so it gets a single leading slash here rather than the double
-// slash a real UNC root needs -- still an improvement over losing it
-// entirely, but not a complete fix for that pre-existing edge case.
+// path that was genuinely POSIX-absolute to begin with. A UNC path
+// (\\server\share\...) normalizes to a leading "//", which the startsWith("//")
+// check below matches first and correctly preserves as a double slash --
+// a real UNC root, not the single-slash form.
 function posixAbsolutePrefix(rawPath: string): string {
   const normalized = rawPath.replace(/\\/g, "/");
   if (normalized.startsWith("//")) return "//";

@@ -2,6 +2,7 @@
 import React from "react";
 import { X, FolderInput } from "lucide-react";
 import { RichTreeView } from "@mui/x-tree-view/RichTreeView";
+import { treeItemClasses } from "@mui/x-tree-view/TreeItem";
 import { Folder, STLModel, FILE_VIEW_UPLOADS_BUCKET_ID } from "../types";
 import { useFolderTree } from "../hooks/useFolderTree";
 
@@ -76,9 +77,17 @@ export default function FolderPicker({
     // (bubbling only changes currentTarget), so an arrow click is
     // identifiable and ignored -- this only suppresses this component's own
     // onSelect callback, not MUI's internal selection highlight, which is
-    // harmless since nothing reads it.
+    // harmless since nothing reads it. Matched via MUI's public
+    // treeItemClasses constant (not a hardcoded string) so a future
+    // @mui/x-tree-view class-name change fails the TypeScript build loudly
+    // instead of silently reopening this hole. childElementCount > 0 excludes
+    // a leaf item's icon slot, which MUI renders as an empty container with
+    // no expand arrow (no expandable children, so nothing to click there) --
+    // without this a leaf row's icon-slot sliver would swallow clicks that
+    // aren't actually landing on any arrow.
     const clickTarget = event.target as HTMLElement | null;
-    if (clickTarget?.closest?.(".MuiTreeItem-iconContainer")) return;
+    const iconContainer = clickTarget?.closest?.(`.${treeItemClasses.iconContainer}`);
+    if (iconContainer && iconContainer.childElementCount > 0) return;
 
     if (nodeId === FOLDER_PICKER_ROOT_ID) {
       // Unreachable when allowRoot is false since the node is never rendered
