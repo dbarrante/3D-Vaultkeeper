@@ -75,6 +75,9 @@ const App = () => {
   // Bulk Action State
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [showMoveModal, setShowMoveModal] = useState(false);
+  const [newFolderMoveStep, setNewFolderMoveStep] = useState<null | "pick-parent" | "name">(null);
+  const [newFolderMoveParent, setNewFolderMoveParent] = useState<FolderPickerTarget | null>(null);
+  const [newFolderMoveName, setNewFolderMoveName] = useState("");
   const [showTagModal, setShowTagModal] = useState(false);
   const [bulkTags, setBulkTags] = useState("");
 
@@ -854,6 +857,45 @@ const App = () => {
     }
   };
 
+  const handleNewFolderParentSelect = (target: FolderPickerTarget) => {
+    setNewFolderMoveParent(target);
+    setNewFolderMoveStep("name");
+  };
+
+  const handleNewFolderMoveSubmit = async () => {
+    const name = newFolderMoveName.trim();
+    if (!name || !newFolderMoveParent) return;
+    const ids = Array.from(selectedIds) as string[];
+
+    try {
+      if (newFolderMoveParent.mode === "logical") {
+        const created = await api.createFolder(name, newFolderMoveParent.folderId);
+        await api.bulkMoveModels(ids, created.id);
+        setModels((prev) =>
+          prev.map((m) => (selectedIds.has(m.id) ? { ...m, folderId: created.id } : m)),
+        );
+        setFolders((prev) => [...prev, created]);
+      } else {
+        const created = await api.createFileViewFolder(newFolderMoveParent.realPath, name);
+        const result = await api.bulkMoveFileViewModels(ids, created.path);
+        if (result.failed.length > 0) {
+          alert(
+            `Created the folder, but only moved ${result.moved.length} of ${ids.length} files. ` +
+              `${result.failed.length} failed:\n` + result.failed.map((f) => f.reason).join("\n"),
+          );
+        }
+        await fetchData();
+      }
+      setNewFolderMoveStep(null);
+      setNewFolderMoveParent(null);
+      setNewFolderMoveName("");
+      setSelectedIds(new Set());
+    } catch (e) {
+      console.error("Move to new folder failed", e);
+      alert(e instanceof Error ? e.message : "Move to new folder failed");
+    }
+  };
+
   const handleDropMove = async (targetFolderId: string, modelIds: string[]) => {
     try {
       await api.bulkMoveModels(modelIds, targetFolderId);
@@ -1148,6 +1190,17 @@ const App = () => {
                       <FolderInput className="w-4 h-4" />
                       <span className="text-sm font-medium hidden sm:inline">
                         Move
+                      </span>
+                    </button>
+
+                    <button
+                      onClick={() => setNewFolderMoveStep("pick-parent")}
+                      className="p-2 rounded-full hover:bg-vault-700 text-slate-300 hover:text-green-400 transition-colors flex items-center gap-2"
+                      title="Move to New Folder"
+                    >
+                      <FolderInput className="w-4 h-4" />
+                      <span className="text-sm font-medium hidden sm:inline">
+                        Move to New Folder
                       </span>
                     </button>
 
@@ -1664,6 +1717,62 @@ const App = () => {
                 onSelect={handleBulkMoveSelect}
                 onClose={() => setShowMoveModal(false)}
               />
+
+              <FolderPicker
+                open={newFolderMoveStep === "pick-parent"}
+                viewMode={viewMode}
+                folders={folders}
+                models={models}
+                trackedFolderPaths={trackedFolderPaths}
+                title="Choose a location for the new folder"
+                allowRoot
+                onSelect={handleNewFolderParentSelect}
+                onClose={() => setNewFolderMoveStep(null)}
+              />
+
+              {newFolderMoveStep === "name" && (
+                <div className="fixed left-0 top-0 z-50 w-full h-full bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+                  <div className="bg-vault-800 border border-vault-600 rounded-xl p-6 w-80 shadow-2xl animate-in zoom-in-95 duration-200">
+                    <div className="flex justify-between items-center mb-4">
+                      <h3 className="font-bold text-white flex items-center gap-2">
+                        <FolderInput className="w-4 h-4" /> Name the New Folder
+                      </h3>
+                      <button
+                        onClick={() => setNewFolderMoveStep(null)}
+                        className="text-slate-400 hover:text-white"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+                    <input
+                      type="text"
+                      autoFocus
+                      value={newFolderMoveName}
+                      onChange={(e) => setNewFolderMoveName(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") handleNewFolderMoveSubmit();
+                      }}
+                      placeholder="Folder name"
+                      className="w-full px-3 py-2 rounded bg-vault-700 border border-vault-600 text-white placeholder-slate-500 mb-4 focus:outline-none focus:border-blue-500"
+                    />
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => setNewFolderMoveStep(null)}
+                        className="flex-1 py-2.5 rounded-lg bg-vault-700 hover:bg-vault-600 text-slate-200 font-medium transition-colors"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        onClick={handleNewFolderMoveSubmit}
+                        disabled={!newFolderMoveName.trim()}
+                        className="flex-1 py-2.5 rounded-lg bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-medium transition-colors"
+                      >
+                        Create & Move
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {showTagModal && (
                 <div
