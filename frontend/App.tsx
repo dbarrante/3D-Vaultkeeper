@@ -6,6 +6,7 @@ import Settings from "./components/Settings";
 import Navbar from "./components/Navbar";
 import ManualModal from "./components/ManualModal";
 import ThumbnailProgressBar from "./components/ThumbnailProgressBar";
+import FolderPicker, { FolderPickerTarget } from "./components/FolderPicker";
 import {
   STLModel,
   Folder,
@@ -825,19 +826,31 @@ const App = () => {
     }
   };
 
-  const handleBulkMoveSubmit = async (targetFolderId: string) => {
+  const handleBulkMoveSelect = async (target: FolderPickerTarget) => {
+    const ids = Array.from(selectedIds) as string[];
     try {
-      const ids = Array.from(selectedIds) as string[];
-      await api.bulkMoveModels(ids, targetFolderId);
-      setModels((prev) =>
-        prev.map((m) =>
-          selectedIds.has(m.id) ? { ...m, folderId: targetFolderId } : m,
-        ),
-      );
+      if (target.mode === "logical") {
+        await api.bulkMoveModels(ids, target.folderId);
+        setModels((prev) =>
+          prev.map((m) =>
+            selectedIds.has(m.id) ? { ...m, folderId: target.folderId as string } : m,
+          ),
+        );
+      } else {
+        const result = await api.bulkMoveFileViewModels(ids, target.realPath);
+        if (result.failed.length > 0) {
+          alert(
+            `Moved ${result.moved.length} of ${ids.length} files. ${result.failed.length} failed:\n` +
+              result.failed.map((f) => f.reason).join("\n"),
+          );
+        }
+        await fetchData();
+      }
       setShowMoveModal(false);
       setSelectedIds(new Set());
     } catch (e) {
       console.error("Bulk move failed", e);
+      alert(e instanceof Error ? e.message : "Bulk move failed");
     }
   };
 
@@ -1640,56 +1653,17 @@ const App = () => {
                 </div>
               )}
 
-              {showMoveModal && (
-                <div
-                  className={`fixed left-0 top-0 z-50 bg-black/60 backdrop-blur-sm flex justify-center p-4 ${
-                    visualViewport.keyboardOpen ? "items-start" : "items-center"
-                  }`}
-                  style={{
-                    width: "100%",
-                    height:
-                      visualViewport.height ||
-                      (typeof window !== "undefined" ? window.innerHeight : 0),
-                    transform: `translate(${visualViewport.offsetLeft}px, ${visualViewport.offsetTop}px)`,
-                  }}
-                >
-                  <div
-                    className="bg-vault-800 border border-vault-600 rounded-xl p-6 w-80 shadow-2xl animate-in zoom-in-95 duration-200 overflow-y-auto"
-                    style={{
-                      maxHeight: Math.max(
-                        200,
-                        (visualViewport.height ||
-                          (typeof window !== "undefined"
-                            ? window.innerHeight
-                            : 0)) - 32,
-                      ),
-                    }}
-                  >
-                    <div className="flex justify-between items-center mb-4">
-                      <h3 className="font-bold text-white flex items-center gap-2">
-                        <FolderInput className="w-4 h-4" /> Move to Folder
-                      </h3>
-                      <button
-                        onClick={() => setShowMoveModal(false)}
-                        className="text-slate-400 hover:text-white"
-                      >
-                        <X className="w-4 h-4" />
-                      </button>
-                    </div>
-                    <div className="space-y-2 max-h-64 overflow-y-auto mb-4">
-                      {folders.map((folder) => (
-                        <button
-                          key={folder.id}
-                          onClick={() => handleBulkMoveSubmit(folder.id)}
-                          className="w-full text-left px-3 py-2 rounded hover:bg-vault-700 text-slate-300 hover:text-white text-sm transition-colors"
-                        >
-                          {folder.name}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              )}
+              <FolderPicker
+                open={showMoveModal}
+                viewMode={viewMode}
+                folders={folders}
+                models={models}
+                trackedFolderPaths={trackedFolderPaths}
+                title="Move to Folder"
+                allowRoot={viewMode === "file"}
+                onSelect={handleBulkMoveSelect}
+                onClose={() => setShowMoveModal(false)}
+              />
 
               {showTagModal && (
                 <div

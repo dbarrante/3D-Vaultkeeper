@@ -362,13 +362,29 @@ export const api = {
   },
 
   // 11. BULK MOVE
-  bulkMoveModels: async (ids: string[], folderId: string): Promise<void> => {
+  bulkMoveModels: async (ids: string[], folderId: string | null): Promise<void> => {
     const res = await fetch(`${getApiBaseUrl()}/models/bulk-move`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ ids, folderId }),
     });
     if (!res.ok) throw new Error("Bulk move failed");
+  },
+
+  bulkMoveFileViewModels: async (
+    ids: string[],
+    targetPath: string | null,
+  ): Promise<{ moved: { id: string; filePath: string }[]; failed: { id: string; reason: string }[] }> => {
+    const res = await fetch(`${getApiBaseUrl()}/file-view/models/bulk-move`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ids, targetPath }),
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.detail || "Bulk move failed");
+    }
+    return res.json();
   },
 
   // 12. BULK TAG
