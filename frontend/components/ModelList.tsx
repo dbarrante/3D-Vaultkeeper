@@ -397,15 +397,26 @@ const ModelList: React.FC<ModelListProps> = ({
   };
 
   const handleCardDragStart = (e: React.DragEvent, modelId: string) => {
-    if (viewMode === "file") {
-      e.dataTransfer.setData("application/x-fileview-model", modelId);
-      e.dataTransfer.effectAllowed = "copyMove";
-      return;
-    }
-    // If the user drags a card, we initiate a move operation
     const idsToMove = selectedIds.has(modelId)
       ? Array.from(selectedIds)
       : [modelId];
+
+    if (viewMode === "file") {
+      // Sidebar's own file-tree drop target (handleFileTreeDrop) reads only
+      // this key, single-model, and predates this plan -- keep it untouched.
+      // handleFolderDrop's move branch (this component's own folder-tile
+      // drop handler, shared with Logical view) reads only application/json,
+      // so File view needs to set both: x-fileview-model for the sidebar,
+      // application/json (multi-select-aware, matching Logical view's own
+      // drag payload) for the new File-view grid tiles.
+      e.dataTransfer.setData("application/x-fileview-model", modelId);
+      e.dataTransfer.setData(
+        "application/json",
+        JSON.stringify({ modelIds: idsToMove }),
+      );
+      e.dataTransfer.effectAllowed = "copyMove";
+      return;
+    }
 
     e.dataTransfer.setData(
       "application/json",
