@@ -3,6 +3,7 @@ import {
   Check,
   ChevronLeft,
   EthernetPort,
+  Eye,
   Globe,
   KeyRound,
   Sparkles,
@@ -15,6 +16,8 @@ import {
   ALL_SLICER_TYPES,
   getEnabledLaunchSlicers,
   setEnabledLaunchSlicers,
+  getShowFolderPathOnCard,
+  setShowFolderPathOnCard,
   SLICERS,
   SlicerType,
 } from "../services/api";
@@ -62,6 +65,15 @@ const Settings: React.FC<SettingsProps> = ({ onBack }) => {
     }
     return port ? port : envport;
   });
+
+  const [showFolderPath, setShowFolderPath] = useState<boolean>(() =>
+    getShowFolderPathOnCard(),
+  );
+
+  const handleShowFolderPathChange = (value: boolean) => {
+    setShowFolderPath(value);
+    setShowFolderPathOnCard(value);
+  };
 
   // Save slicer preference to localStorage when changed
   const handleSlicerChange = (slicer: SlicerType) => {
@@ -218,6 +230,37 @@ const Settings: React.FC<SettingsProps> = ({ onBack }) => {
               exact setup varies by slicer and operating system.
             </p>
           </div>
+        </div>
+
+        {/* Display Preferences */}
+        <div className="mb-8">
+          <div className="flex items-center gap-2 mb-4">
+            <Eye className="w-5 h-5 text-blue-400" />
+            <h3 className="text-lg font-semibold text-white">Display</h3>
+          </div>
+          <p className="text-sm text-slate-400 mb-4">
+            Options that control how models are displayed in the library.
+          </p>
+
+          <button
+            onClick={() => handleShowFolderPathChange(!showFolderPath)}
+            className={`w-full p-4 rounded-lg border-2 transition-all text-left flex items-center justify-between ${
+              showFolderPath
+                ? "border-blue-500 bg-blue-500/10 shadow-lg shadow-blue-500/20"
+                : "border-vault-700 bg-vault-800 hover:border-vault-600"
+            }`}
+          >
+            <div>
+              <span className="font-medium text-white">
+                Show folder path on card
+              </span>
+              <span className="text-xs text-slate-500 mt-1 block">
+                File view only -- shows each model's containing folder on its
+                card.
+              </span>
+            </div>
+            {showFolderPath && <Check className="w-5 h-5 text-blue-500" />}
+          </button>
         </div>
 
         {/* Import Sources */}

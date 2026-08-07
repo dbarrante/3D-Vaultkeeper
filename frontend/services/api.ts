@@ -107,6 +107,14 @@ export const setEnabledLaunchSlicers = (slicers: SlicerType[]) => {
   localStorage.setItem("stlvault-slicer", enabled[0] || getSlicerPreference());
 };
 
+export const getShowFolderPathOnCard = (): boolean => {
+  return localStorage.getItem("stlvault-show-folder-path") === "true";
+};
+
+export const setShowFolderPathOnCard = (value: boolean) => {
+  localStorage.setItem("stlvault-show-folder-path", value ? "true" : "false");
+};
+
 export class ImportCollisionError extends Error {
   existingFolderId: string;
   existingFolderName: string;

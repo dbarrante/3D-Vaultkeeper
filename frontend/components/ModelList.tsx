@@ -79,6 +79,7 @@ interface ModelListProps {
 
   viewMode: "logical" | "file";
   onFileViewMutated: () => void;
+  showFolderPath: boolean;
 }
 
 type SortOption =
@@ -110,6 +111,7 @@ const ModelList: React.FC<ModelListProps> = ({
   onUploadToFolder,
   viewMode,
   onFileViewMutated,
+  showFolderPath,
 }) => {
   const [isDragging, setIsDragging] = useState(false);
   const [fileContextMenu, setFileContextMenu] = useState<{
@@ -885,6 +887,23 @@ const ModelList: React.FC<ModelListProps> = ({
                           {" MB  • "}
                           {new Date(model.dateAdded).toLocaleDateString()}
                         </Typography>
+                        {viewMode === "file" && showFolderPath && model.filePath && (
+                          <Typography
+                            variant="caption"
+                            noWrap={true}
+                            sx={{ color: "text.secondary", display: "block" }}
+                          >
+                            {(() => {
+                              const lastSep = Math.max(
+                                model.filePath.lastIndexOf("/"),
+                                model.filePath.lastIndexOf("\\"),
+                              );
+                              return lastSep >= 0
+                                ? model.filePath.slice(0, lastSep)
+                                : model.filePath;
+                            })()}
+                          </Typography>
+                        )}
                       </CardContent>
                     </CardActionArea>
                     <CardActions>

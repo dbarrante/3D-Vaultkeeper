@@ -20,7 +20,7 @@ import {
   generateThumbnailFromUrl,
   ThumbnailTransportError,
 } from "./services/thumbnailGenerator";
-import { api, resolveApiOrigin } from "./services/api";
+import { api, resolveApiOrigin, getShowFolderPathOnCard } from "./services/api";
 import { ImportCollisionError } from "./services/api";
 import {
   FolderInput,
@@ -69,6 +69,9 @@ const App = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [uploadQueue, setUploadQueue] = useState<number>(0);
   const [showSettings, setShowSettings] = useState(false);
+  const [showFolderPath, setShowFolderPath] = useState<boolean>(() =>
+    getShowFolderPathOnCard(),
+  );
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
   const [isMobileSidebarMounted, setIsMobileSidebarMounted] = useState(false);
   const [isMobileSidebarVisible, setIsMobileSidebarVisible] = useState(false);
@@ -1165,7 +1168,12 @@ const App = () => {
 
         {/* Settings View */}
         {showSettings ? (
-          <Settings onBack={() => setShowSettings(false)} />
+          <Settings
+            onBack={() => {
+              setShowFolderPath(getShowFolderPathOnCard());
+              setShowSettings(false);
+            }}
+          />
         ) : (
           <>
             <main className="flex-1 flex overflow-hidden relative">
@@ -1206,6 +1214,7 @@ const App = () => {
                     handleUpload(files, viewMode === "file" ? undefined : folderId)
                   }
                   viewMode={viewMode}
+                  showFolderPath={showFolderPath}
                   onFileViewMutated={fetchData}
                 />
               )}
