@@ -40,6 +40,7 @@ import MenuItem from "@mui/material/MenuItem";
 
 import { api } from "../services/api";
 import { useFolderTree } from "../hooks/useFolderTree";
+import FolderPicker, { FolderPickerTarget } from "./FolderPicker";
 
 const APP_TAG = import.meta.env.VITE_APP_TAG || "dev";
 
@@ -274,6 +275,8 @@ const Sidebar: React.FC<SidebarProps> = ({
     nodeId: string;
     realPath: string | null;
   } | null>(null);
+
+  const [moveFolderPickerSource, setMoveFolderPickerSource] = useState<string | null>(null);
 
   // The Uploads bucket isn't a real single directory, so it gets a menu
   // with only New Folder (realPath: null, meaning "create at the library
@@ -754,19 +757,7 @@ const Sidebar: React.FC<SidebarProps> = ({
             key="move"
             onClick={() => {
               if (folderContextMenu?.realPath) {
-                const targetParent = window.prompt(
-                  "Move to which real folder path? (paste the full destination directory)",
-                  folderContextMenu.realPath,
-                );
-                if (targetParent && targetParent !== folderContextMenu.realPath) {
-                  api
-                    .moveFileViewFolder(folderContextMenu.realPath, targetParent)
-                    .then(onFileViewMutated)
-                    .catch((err) => {
-                      console.error("Folder move failed:", err);
-                      alert(err instanceof Error ? err.message : "Folder move failed");
-                    });
-                }
+                setMoveFolderPickerSource(folderContextMenu.realPath);
               }
               setFolderContextMenu(null);
             }}
@@ -784,6 +775,29 @@ const Sidebar: React.FC<SidebarProps> = ({
           </MenuItem>,
         ]}
       </Menu>
+
+      <FolderPicker
+        open={moveFolderPickerSource !== null}
+        viewMode="file"
+        folders={folders}
+        models={models}
+        trackedFolderPaths={trackedFolderPaths}
+        title="Move Folder"
+        allowRoot={false}
+        onSelect={(target: FolderPickerTarget) => {
+          if (target.mode === "file" && moveFolderPickerSource && target.realPath) {
+            api
+              .moveFileViewFolder(moveFolderPickerSource, target.realPath)
+              .then(onFileViewMutated)
+              .catch((err) => {
+                console.error("Folder move failed:", err);
+                alert(err instanceof Error ? err.message : "Folder move failed");
+              });
+          }
+          setMoveFolderPickerSource(null);
+        }}
+        onClose={() => setMoveFolderPickerSource(null)}
+      />
 
       <div className="p-4 border-t border-vault-700 z-10 gap-3 flex flex-col">
         <Button
