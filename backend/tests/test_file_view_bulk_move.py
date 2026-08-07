@@ -1,4 +1,3 @@
-import os
 import sqlite3
 from pathlib import Path
 
@@ -177,3 +176,46 @@ def test_bulk_move_rolls_back_file_on_db_failure(client, tmp_path, monkeypatch):
 
     # File was moved back to its original location by the rollback.
     assert Path(original_path).exists()
+
+
+def test_bulk_move_continues_on_move_failure(client, tmp_path, monkeypatch):
+    import shutil as shutil_module
+
+    a = _make_model(tmp_path, "a", "Source")
+    b = _make_model(tmp_path, "b", "Source")
+
+    target = client.post("/api/file-view/folder", json={"parentPath": None, "name": "Dest"}).json()["path"]
+
+    # Mock shutil.move to fail for model "a" but succeed for others
+    original_move = shutil_module.move
+    move_attempts = []
+
+    def failing_move_for_a(src, dst):
+        move_attempts.append((src, dst))
+        # Fail when moving file "a" to destination
+        if Path(src).name == Path(a["filePath"]).name:
+            raise OSError("Permission denied (simulated)")
+        return original_move(src, dst)
+
+    monkeypatch.setattr("shutil.move", failing_move_for_a)
+
+    response = client.post(
+        "/api/file-view/models/bulk-move",
+        json={"ids": [a["id"], b["id"]], "targetPath": target},
+    )
+    assert response.status_code == 200
+    body = response.json()
+
+    # Model "a" should fail, but model "b" should succeed
+    assert len(body["failed"]) == 1
+    assert body["failed"][0]["id"] == a["id"]
+    assert "Permission denied" in body["failed"][0]["reason"]
+
+    assert len(body["moved"]) == 1
+    assert body["moved"][0]["id"] == b["id"]
+    assert Path(body["moved"][0]["filePath"]).exists()
+
+    # Model "a" stays in original location
+    assert Path(a["filePath"]).exists()
+    # Model "b" was successfully moved
+    assert not Path(b["filePath"]).exists()
