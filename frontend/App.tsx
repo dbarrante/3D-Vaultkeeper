@@ -960,6 +960,30 @@ const App = () => {
   };
 
   const handleDropMove = async (targetFolderId: string, modelIds: string[]) => {
+    if (viewMode === "file") {
+      // The Uploads-bucket tile has no entry in realPaths (it has no single
+      // real path -- see useFolderTree) and is therefore not a valid drop
+      // target; this silently no-ops rather than attempting a move with no
+      // resolvable destination, matching how FolderPicker also disables it
+      // as a selectable move destination for the identical reason.
+      const realPath = folderTree.realPaths?.get(targetFolderId);
+      if (!realPath) return;
+      try {
+        const result = await api.bulkMoveFileViewModels(modelIds, realPath);
+        if (result.failed.length > 0) {
+          alert(
+            `Moved ${result.moved.length} of ${modelIds.length} files. ${result.failed.length} failed:\n` +
+              result.failed.map((f) => f.reason).join("\n"),
+          );
+        }
+        await fetchData();
+        setSelectedIds(new Set());
+      } catch (e) {
+        console.error("Drop move failed", e);
+        alert(e instanceof Error ? e.message : "Drop move failed");
+      }
+      return;
+    }
     try {
       await api.bulkMoveModels(modelIds, targetFolderId);
       setModels((prev) =>
@@ -1179,7 +1203,7 @@ const App = () => {
                   onNavigateFolder={(id) => setCurrentFolderId(id)}
                   onMoveToFolder={handleDropMove}
                   onUploadToFolder={(folderId, files) =>
-                    handleUpload(files, folderId)
+                    handleUpload(files, viewMode === "file" ? undefined : folderId)
                   }
                   viewMode={viewMode}
                   onFileViewMutated={fetchData}
