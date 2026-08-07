@@ -37,6 +37,8 @@ Frontend only. The backend endpoints this needs (`POST /api/file-view/models/bul
 
 `handleDropMove(targetFolderId, modelIds)` (`App.tsx:899`, already shared by Sidebar's file-tree drop and Logical folder tiles) becomes view-mode-aware, branching the same way `handleBulkMoveSelect` (from the prior plan) already does: Logical → unchanged `api.bulkMoveModels`. File view → resolve `targetFolderId` (a synthetic tree id) to a real path via the same `realPaths` map the hook already produces, then `api.bulkMoveFileViewModels(modelIds, realPath)` + `fetchData()`, reusing that plan's best-effort partial-failure `alert(...)` convention.
 
+**The Uploads-bucket tile is not a valid drop target.** It has no single real path (`realPaths` has no entry for `FILE_VIEW_UPLOADS_BUCKET_ID`, by the same reasoning `FolderPicker` already disables it as a selectable move destination via `isItemDisabled`). The Uploads-bucket tile, when it appears at the "all" level, must not register as a drop target at all — matching that existing precedent rather than introducing a new, differently-behaved edge case.
+
 ### Settings toggle
 
 - `frontend/services/api.ts`: `getShowFolderPathOnCard(): boolean` / `setShowFolderPathOnCard(value: boolean): void`, localStorage key `"stlvault-show-folder-path"`, `"true"`/`"false"` string values — matching this file's existing localStorage-boolean-flag pattern (e.g. `api-port-override`).
