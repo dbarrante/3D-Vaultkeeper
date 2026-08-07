@@ -13,12 +13,11 @@ import {
   PlusIcon,
 } from "lucide-react";
 import { Folder, STLModel, StorageStats } from "../types";
-import { FILE_VIEW_UPLOADS_BUCKET_ID, fileViewSegments, fileViewFolderSegments } from "../types";
+import { FILE_VIEW_UPLOADS_BUCKET_ID } from "../types";
 
 import Stack from "@mui/material/Stack";
 import IconButton from "@mui/material/IconButton";
 import Typography from "@mui/material/Typography";
-import { TreeViewDefaultItemModelProperties } from "@mui/x-tree-view/models";
 import { useTreeItemUtils } from "@mui/x-tree-view/hooks";
 import {
   UseTreeItemContentSlotOwnProps,
@@ -40,6 +39,7 @@ import Menu from "@mui/material/Menu";
 import MenuItem from "@mui/material/MenuItem";
 
 import { api } from "../services/api";
+import { useFolderTree } from "../hooks/useFolderTree";
 
 const APP_TAG = import.meta.env.VITE_APP_TAG || "dev";
 
@@ -266,131 +266,7 @@ const Sidebar: React.FC<SidebarProps> = ({
       ? Math.min((storageStats.used / storageStats.total) * 100, 100)
       : 0;
 
-  // Root folders
-  const rootFolders = folders.filter((f) => f.parentId === null);
-
-  //builds the treeview structure
-  const treefolders = () => {
-    const treeitems: TreeViewDefaultItemModelProperties[] = [];
-    rootFolders.map((folder) => {
-      treeitems.push({
-        id: folder.id,
-        label: folder.name,
-        children: [],
-      });
-    });
-    treeitems.map((folder) => {
-      folders.map((subfolder) => {
-        if (subfolder.parentId === folder.id) {
-          folder.children.push({ id: subfolder.id, label: subfolder.name });
-        }
-      });
-      folder.children.sort((a, b) => {
-        return a.label.localeCompare(b.label);
-      });
-    });
-    treeitems.sort((a, b) => {
-      return a.label.localeCompare(b.label);
-    });
-    return treeitems;
-  };
-
-  // Groups every model by its filePath's directory instead of folderId.
-  // Models with no filePath (shouldn't normally happen post-migration, but
-  // defensive) or whose filePath sits directly in the flat pre-feature
-  // upload location (no real subdirectory under it) land in a single
-  // synthetic "Uploads" bucket rather than fabricating structure that was
-  // never there -- see the spec's Non-goals.
-  const fileTree = useMemo(() => {
-    type FileNode = { id: string; label: string; children: FileNode[]; childMap: Record<string, FileNode> };
-    const root: FileNode = { id: "__root__", label: "", children: [], childMap: {} };
-    const realPaths = new Map<string, string>();
-
-    models.forEach((m) => {
-      if (!m.filePath) return;
-      // Shared with App.tsx's filteredModels via fileViewSegments (types.ts)
-      // so the tree's node ids and the grid's filter can never derive
-      // different "meaningful segments" for the same file.
-      const meaningfulSegments = fileViewSegments(m.filePath);
-
-      if (meaningfulSegments.length === 0) {
-        if (!root.childMap[FILE_VIEW_UPLOADS_BUCKET_ID]) {
-          const node: FileNode = { id: FILE_VIEW_UPLOADS_BUCKET_ID, label: "Uploads", children: [], childMap: {} };
-          root.childMap[FILE_VIEW_UPLOADS_BUCKET_ID] = node;
-          root.children.push(node);
-        }
-        return;
-      }
-
-      // The synthetic id's segments are always a *suffix* of the file's real
-      // (normalized, filename-dropped) directory segments -- fileViewSegments
-      // only ever drops a leading prefix (nothing, or everything through a
-      // literal "uploads" segment). So realSegments.length - meaningfulSegments.length
-      // is the number of dropped leading segments, constant for this file, and
-      // slicing rawSegments to dropped + depth reconstructs the real absolute
-      // path up to any node on this file's chain.
-      const rawSegments = m.filePath.replace(/\\/g, "/").split("/").filter((s) => s.length > 0);
-      rawSegments.pop(); // drop filename, mirrors fileViewSegments
-      const dropped = rawSegments.length - meaningfulSegments.length;
-
-      let cursor = root;
-      let idPath = "file";
-      meaningfulSegments.forEach((segment, index) => {
-        idPath += `/${segment}`;
-        if (!cursor.childMap[segment]) {
-          const node: FileNode = { id: idPath, label: segment, children: [], childMap: {} };
-          cursor.childMap[segment] = node;
-          cursor.children.push(node);
-          realPaths.set(idPath, rawSegments.slice(0, dropped + index + 1).join("/"));
-        }
-        cursor = cursor.childMap[segment];
-      });
-    });
-
-    // Tracked (possibly empty) folders get the same node-creation treatment
-    // as model-derived ones, but seeded from a raw folder path instead of a
-    // model's filePath -- there's no filename to drop, so this uses
-    // fileViewFolderSegments instead of fileViewSegments. A tracked folder
-    // that already has models under it is a no-op here: childMap already
-    // has every node on its chain from the walk above.
-    trackedFolderPaths.forEach((trackedPath) => {
-      const rawSegments = trackedPath.replace(/\\/g, "/").split("/").filter((s) => s.length > 0);
-      // Unlike the model walk above, there's no synthetic Uploads bucket to
-      // fall back into here -- that bucket specifically represents flat
-      // pre-feature copy-mode storage under UPLOAD_DIR, and a tracked folder
-      // reaching this branch is, in every real case, a folder literally named
-      // "Uploads"/"uploads"/etc. created under a WATCH root (create_folder
-      // already refuses to produce the degenerate case under UPLOAD_DIR
-      // itself). Routing it into the bucket would mislabel it as flat
-      // copy-mode storage it isn't, so instead fall back to the raw,
-      // uncollapsed path segments -- the folder still gets a real tree node
-      // at its actual real location instead of silently vanishing.
-      let meaningfulSegments = fileViewFolderSegments(trackedPath);
-      if (meaningfulSegments.length === 0) meaningfulSegments = rawSegments;
-
-      const dropped = rawSegments.length - meaningfulSegments.length;
-
-      let cursor = root;
-      let idPath = "file";
-      meaningfulSegments.forEach((segment, index) => {
-        idPath += `/${segment}`;
-        if (!cursor.childMap[segment]) {
-          const node: FileNode = { id: idPath, label: segment, children: [], childMap: {} };
-          cursor.childMap[segment] = node;
-          cursor.children.push(node);
-          realPaths.set(idPath, rawSegments.slice(0, dropped + index + 1).join("/"));
-        }
-        cursor = cursor.childMap[segment];
-      });
-    });
-
-    const strip = (node: FileNode): TreeViewDefaultItemModelProperties => ({
-      id: node.id,
-      label: node.label,
-      children: node.children.map(strip),
-    });
-    return { items: root.children.map(strip), realPaths };
-  }, [models, trackedFolderPaths]);
+  const folderTree = useFolderTree(viewMode, folders, models, trackedFolderPaths);
 
   const [folderContextMenu, setFolderContextMenu] = useState<{
     mouseX: number;
@@ -406,7 +282,7 @@ const Sidebar: React.FC<SidebarProps> = ({
   // having a resolvable real path.
   const handleFileTreeContextMenu = (e: React.MouseEvent, nodeId: string) => {
     const isUploadsBucket = nodeId === FILE_VIEW_UPLOADS_BUCKET_ID;
-    const realPath = isUploadsBucket ? null : fileTree.realPaths.get(nodeId) ?? null;
+    const realPath = isUploadsBucket ? null : folderTree.realPaths?.get(nodeId) ?? null;
     if (!isUploadsBucket && !realPath) return;
     e.preventDefault();
     e.stopPropagation();
@@ -494,7 +370,7 @@ const Sidebar: React.FC<SidebarProps> = ({
     e.stopPropagation();
     const modelId = e.dataTransfer.getData("application/x-fileview-model");
     if (!modelId || nodeId === FILE_VIEW_UPLOADS_BUCKET_ID) return;
-    const targetDir = fileTree.realPaths.get(nodeId);
+    const targetDir = folderTree.realPaths?.get(nodeId);
     if (!targetDir) return;
     const model = models.find((m) => m.id === modelId);
     if (!model || !model.filePath) return;
@@ -556,15 +432,15 @@ const Sidebar: React.FC<SidebarProps> = ({
   // a bare function component here would silently drop it (React 18)
   // instead of forwarding it to the underlying TreeItem.
   //
-  // Also wrapped in useCallback keyed on [fileTree, models] (per review):
+  // Also wrapped in useCallback keyed on [folderTree, models] (per review):
   // without memoization the component gets a new identity on every Sidebar
   // re-render -- including the very re-render triggered by
   // setFolderContextMenu when the user right-clicks -- which makes MUI
   // remount tree items instead of updating them in place, partially
   // undercutting the forwardRef fix above (remounted items lose focus/DOM
   // identity anyway). The closure reads handleFileTreeContextMenu (which
-  // reads fileTree.realPaths) and handleFileTreeDrop (which additionally
-  // reads models), so [fileTree, models] is the correct dependency list.
+  // reads folderTree.realPaths) and handleFileTreeDrop (which additionally
+  // reads models), so [folderTree, models] is the correct dependency list.
   const FileViewTreeItem = React.useCallback(
     React.forwardRef(function FileViewTreeItem(
       props: TreeItemProps,
@@ -582,7 +458,7 @@ const Sidebar: React.FC<SidebarProps> = ({
         />
       );
     }),
-    [fileTree, models],
+    [folderTree, models],
   );
 
   interface CustomLabelProps extends UseTreeItemLabelSlotOwnProps {
@@ -813,7 +689,7 @@ const Sidebar: React.FC<SidebarProps> = ({
           )}
           {viewMode === "logical" ? (
             <RichTreeView
-              items={treefolders()}
+              items={folderTree.items}
               slots={{ item: CustomTreeItem }}
               expansionTrigger="iconContainer"
               expandedItems={Array.from(expandedIds)}
@@ -823,7 +699,7 @@ const Sidebar: React.FC<SidebarProps> = ({
             />
           ) : (
             <RichTreeView
-              items={fileTree.items}
+              items={folderTree.items}
               selectedItems={currentFolderId}
               slots={{ item: FileViewTreeItem }}
               onSelectedItemsChange={(_e, itemId) => {
