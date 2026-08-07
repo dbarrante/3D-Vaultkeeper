@@ -4,6 +4,8 @@ $repoRoot = Split-Path -Parent $PSScriptRoot
 
 Write-Host "Building frontend..."
 Push-Location "$repoRoot\frontend"
+bun install
+if ($LASTEXITCODE -ne 0) { throw "Frontend dependency install failed with exit code $LASTEXITCODE" }
 bun run build
 if ($LASTEXITCODE -ne 0) { throw "Frontend build failed with exit code $LASTEXITCODE" }
 Pop-Location
