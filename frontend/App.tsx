@@ -337,14 +337,21 @@ const App = () => {
       // (see Task 9) -- strip that prefix to get the target path segments,
       // then require a model's own segments (via the shared fileViewSegments
       // helper, so this can never drift from how Sidebar built the tree) to
-      // match positionally at the same indices. Positional comparison (not a
-      // substring search) avoids conflating the same folder name appearing at
-      // two different depths, e.g. uploads/Tanks vs uploads/Vehicles/Tanks.
+      // match positionally at the same indices AND have the exact same
+      // length -- fileViewSegments already drops the filename, so a length
+      // match means the file sits directly in this folder, not some
+      // descendant subfolder. (Previously this only required the target
+      // segments to be a *prefix* of the model's segments, which recursively
+      // matched every file anywhere under the selected folder -- e.g.
+      // selecting "Vehicles" also matched "Vehicles/Tanks/model.stl". Direct
+      // children of deeper folders are still reachable by navigating into
+      // them via their own folder tile/sidebar node, exactly like Windows
+      // Explorer.)
       const targetSegments = currentFolderId.replace(/^file\//, "").split("/");
       return models.filter((m) => {
         if (!m.filePath) return false;
         const modelSegments = fileViewSegments(m.filePath);
-        if (modelSegments.length < targetSegments.length) return false;
+        if (modelSegments.length !== targetSegments.length) return false;
         return targetSegments.every((seg, i) => modelSegments[i] === seg);
       });
     }
