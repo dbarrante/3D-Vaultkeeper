@@ -22,6 +22,7 @@ from app.services.file_view_ops import (
     find_affected_tracked_folders,
 )
 from app.services.import_wizard import sanitize_path_segment
+from app.routers.models import _resolve_copy_mode_file
 
 router = APIRouter(prefix="/api/file-view", tags=["file-view"])
 
@@ -345,7 +346,17 @@ def bulk_move_models(body: BulkMoveRequest):
                     continue
 
                 model_storage_mode = row["storageMode"] if row["storageMode"] else "copy"
-                current_path = row["sourcePath"] if model_storage_mode == "reference" else row["filePath"]
+                if model_storage_mode == "reference":
+                    current_path = row["sourcePath"]
+                else:
+                    # Mirrors update_model_location's copy-mode resolution: prefer
+                    # filePath (correct for both flat legacy uploads and
+                    # wizard-imported files in real subdirectories), and fall back
+                    # to _resolve_copy_mode_file's id-prefix scan of UPLOAD_DIR when
+                    # filePath is missing or stale, so a model only reachable via
+                    # that legacy fallback doesn't spuriously fail here when a
+                    # single-file move via update_model_location would have found it.
+                    current_path = _resolve_copy_mode_file(mid, row["filePath"])
                 if not current_path or not os.path.exists(current_path):
                     failed.append({"id": mid, "reason": "File not found on disk"})
                     continue

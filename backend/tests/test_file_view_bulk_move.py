@@ -178,6 +178,40 @@ def test_bulk_move_rolls_back_file_on_db_failure(client, tmp_path, monkeypatch):
     assert Path(original_path).exists()
 
 
+def test_bulk_move_resolves_via_legacy_fallback_scan(client, tmp_path):
+    from app.db import get_db_conn
+
+    # Flat (dest_subpath=None) so the physical file lands directly in
+    # UPLOAD_DIR as "<id><ext>" -- exactly the id-prefix convention
+    # _resolve_copy_mode_file's fallback os.listdir(UPLOAD_DIR) scan matches
+    # against.
+    a = _make_model(tmp_path, "a", None)
+
+    # Simulate a stale/missing filePath column (e.g. a legacy flat upload
+    # whose row was never backfilled), so bulk_move_models cannot resolve the
+    # file via row["filePath"] directly and must fall back to
+    # _resolve_copy_mode_file's scan -- mirroring what update_model_location
+    # already does for a single-file move.
+    conn = get_db_conn()
+    conn.execute("UPDATE models SET filePath=? WHERE id=?", (str(tmp_path / "does-not-exist.stl"), a["id"]))
+    conn.commit()
+    conn.close()
+
+    target = client.post("/api/file-view/folder", json={"parentPath": None, "name": "Dest"}).json()["path"]
+
+    response = client.post(
+        "/api/file-view/models/bulk-move",
+        json={"ids": [a["id"]], "targetPath": target},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["failed"] == []
+    assert len(body["moved"]) == 1
+    assert body["moved"][0]["id"] == a["id"]
+    assert Path(body["moved"][0]["filePath"]).exists()
+    assert Path(body["moved"][0]["filePath"]).parent == Path(target)
+
+
 def test_bulk_move_continues_on_move_failure(client, tmp_path, monkeypatch):
     import shutil as shutil_module
 
