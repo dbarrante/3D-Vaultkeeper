@@ -33,6 +33,7 @@ import {
   Globe,
 } from "lucide-react";
 import JSZip from "jszip";
+import { useFolderTree } from "./hooks/useFolderTree";
 import { useMediaQuery } from "./hooks/useMediaQuery";
 import { useVisualViewport } from "./hooks/useVisualViewport";
 import Snackbar, { SnackbarCloseReason } from "@mui/material/Snackbar";
@@ -368,6 +369,61 @@ const App = () => {
         : folders.filter((f) => f.parentId === currentFolderId),
     [folders, currentFolderId],
   );
+
+  const folderTree = useFolderTree(viewMode, folders, models, trackedFolderPaths);
+
+  // File-view equivalent of filteredFolders: the current selection's direct
+  // child folders, sourced from the SAME tree data the sidebar renders (via
+  // useFolderTree's nodesById) rather than a second, independently-derived
+  // computation -- so the grid's idea of "direct children" can never drift
+  // from what the sidebar shows. At "all", this is the tree's top-level
+  // items (which already includes the synthetic Uploads bucket), mirroring
+  // how Logical view's filteredFolders shows parentId === null folders at
+  // "all". These are lightweight Folder-shaped objects (no `description`,
+  // so ModelList's existing folder.description-gated info-tooltip simply
+  // doesn't render for them) -- ModelList needs no new tile-rendering code,
+  // it already renders whatever `folders` array it's given.
+  const fileFolderTiles = useMemo((): Folder[] => {
+    if (viewMode !== "file") return [];
+    const nodes =
+      currentFolderId === "all"
+        ? folderTree.items
+        : folderTree.nodesById.get(currentFolderId)?.children ?? [];
+    return nodes.map((node) => ({
+      id: node.id,
+      name: node.label,
+      parentId: currentFolderId === "all" ? null : currentFolderId,
+    }));
+  }, [viewMode, currentFolderId, folderTree]);
+
+  // File-view equivalent of folderPreviews (App.tsx's existing Logical-view
+  // memo just below this one) -- same shape, same "earliest model that
+  // actually has a thumbnail" selection rule, but grouped by each model's
+  // own synthetic parent id (via the shared fileViewSegments helper) instead
+  // of m.folderId, since File-view models don't have a meaningful folderId.
+  const fileFolderPreviews = useMemo(() => {
+    if (viewMode !== "file") return {};
+    const previews: Record<string, { count: number; thumbnail: string | null }> = {};
+    const earliestThumbnailDateAddedByFolder: Record<string, number> = {};
+    models.forEach((m) => {
+      if (!m.filePath) return;
+      const segments = fileViewSegments(m.filePath);
+      const parentId = segments.length === 0 ? FILE_VIEW_UPLOADS_BUCKET_ID : `file/${segments.join("/")}`;
+      if (!previews[parentId]) {
+        previews[parentId] = { count: 0, thumbnail: null };
+      }
+      previews[parentId].count += 1;
+      if (
+        m.thumbnail &&
+        (earliestThumbnailDateAddedByFolder[parentId] === undefined ||
+          m.dateAdded < earliestThumbnailDateAddedByFolder[parentId])
+      ) {
+        earliestThumbnailDateAddedByFolder[parentId] = m.dateAdded;
+        previews[parentId].thumbnail = m.thumbnail;
+      }
+    });
+    return previews;
+  }, [viewMode, models]);
 
   // One card per folder in ModelList shows a representative thumbnail +
   // part count instead of a plain folder icon when the folder has models
@@ -1101,8 +1157,8 @@ const App = () => {
               ) : (
                 <ModelList
                   models={filteredModels}
-                  folders={viewMode === "file" ? [] : filteredFolders}
-                  folderPreviews={folderPreviews}
+                  folders={viewMode === "file" ? fileFolderTiles : filteredFolders}
+                  folderPreviews={viewMode === "file" ? fileFolderPreviews : folderPreviews}
                   currentFolderName={currentFolderName}
                   onBackNavigation={() => {
                     setCurrentFolderId(currentFolderParentId);
