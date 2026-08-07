@@ -786,8 +786,10 @@ const Sidebar: React.FC<SidebarProps> = ({
         allowRoot={false}
         onSelect={(target: FolderPickerTarget) => {
           if (target.mode === "file" && moveFolderPickerSource && target.realPath) {
+            const sourceName = moveFolderPickerSource.replace(/\\/g, "/").split("/").filter(Boolean).pop();
+            const destination = `${target.realPath}/${sourceName}`;
             api
-              .moveFileViewFolder(moveFolderPickerSource, target.realPath)
+              .moveFileViewFolder(moveFolderPickerSource, destination)
               .then(onFileViewMutated)
               .catch((err) => {
                 console.error("Folder move failed:", err);
