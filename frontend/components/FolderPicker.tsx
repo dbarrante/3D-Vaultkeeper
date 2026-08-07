@@ -56,8 +56,29 @@ export default function FolderPicker({
     ? [{ id: FOLDER_PICKER_ROOT_ID, label: rootLabel, children: [] }, ...folderTree.items]
     : folderTree.items;
 
-  const handleSelectedItemsChange = (_event: React.SyntheticEvent, nodeId: string | null) => {
+  const handleSelectedItemsChange = (event: React.SyntheticEvent, nodeId: string | null) => {
     if (!nodeId) return;
+
+    // expansionTrigger="iconContainer" below only stops a click from ALSO
+    // expanding when it lands on the row's content/label -- it does nothing
+    // to stop selection when the click lands on the expand arrow. MUI's
+    // default TreeItem always calls handleSelection from its content
+    // click handler with no trigger gating at all (see
+    // @mui/x-tree-view/useTreeItem/useTreeItem.js's createContentHandleClick),
+    // and the icon container is a DOM child of that content element, so an
+    // icon click bubbles straight into it. Confirmed live: dispatching a
+    // click at the icon container's exact center still fired
+    // onSelectedItemsChange and moved a file with no expand-only path
+    // possible through the prop alone. Since selecting here executes a
+    // move/create-folder immediately with no confirm step, an unguarded
+    // expand-arrow click would silently act on whichever folder was being
+    // expanded. event.target is still the original DOM click target here
+    // (bubbling only changes currentTarget), so an arrow click is
+    // identifiable and ignored -- this only suppresses this component's own
+    // onSelect callback, not MUI's internal selection highlight, which is
+    // harmless since nothing reads it.
+    const clickTarget = event.target as HTMLElement | null;
+    if (clickTarget?.closest?.(".MuiTreeItem-iconContainer")) return;
 
     if (nodeId === FOLDER_PICKER_ROOT_ID) {
       // Unreachable when allowRoot is false since the node is never rendered
@@ -98,6 +119,18 @@ export default function FolderPicker({
             items={items}
             onSelectedItemsChange={handleSelectedItemsChange}
             isItemDisabled={(item) => item.id === FILE_VIEW_UPLOADS_BUCKET_ID}
+            // Without this, MUI's default expansion trigger is "content"
+            // (see @mui/x-tree-view's getExpansionTrigger: falls back to
+            // "content" whenever isItemEditable is falsy, which it is here) --
+            // meaning a click on a folder's label both expands/collapses it AND
+            // fires selection in the same click. Since selecting here
+            // immediately triggers a move/create-folder, the natural gesture of
+            // clicking a parent folder's label to drill into a nested
+            // destination would also select that parent as the target and move
+            // files there with no confirm step. "iconContainer" decouples them:
+            // only the expand/collapse arrow toggles expansion, and clicking the
+            // label only selects. Matches Sidebar's own logical-tree convention.
+            expansionTrigger="iconContainer"
           />
         </div>
       </div>
