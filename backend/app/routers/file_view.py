@@ -1,3 +1,4 @@
+import logging
 import os
 import shutil
 import subprocess
@@ -23,6 +24,8 @@ from app.services.file_view_ops import (
 from app.services.import_wizard import sanitize_path_segment
 
 router = APIRouter(prefix="/api/file-view", tags=["file-view"])
+
+logger = logging.getLogger(__name__)
 
 # Shared by rename/move/delete: all three would orphan a watch_folders.path row
 # in exactly the same way, so they say so in exactly the same words.
@@ -305,3 +308,86 @@ def reveal_in_explorer(body: RevealRequest):
     else:
         subprocess.Popen(["explorer", "/select,", str(target)])
     return {"ok": True}
+
+
+class BulkMoveRequest(BaseModel):
+    ids: list[str]
+    targetPath: Optional[str] = None
+
+
+@router.post("/models/bulk-move")
+def bulk_move_models(body: BulkMoveRequest):
+    # None means the library root, mirroring FolderCreateRequest.parentPath's
+    # existing convention -- the frontend has no way to name UPLOAD_DIR's real
+    # path as a string, so null stands in for it end-to-end.
+    target_path_str = body.targetPath if body.targetPath else str(UPLOAD_DIR)
+    try:
+        ensure_unambiguous_path(target_path_str)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    target_dir = Path(target_path_str)
+    if not target_dir.is_dir():
+        raise HTTPException(status_code=404, detail=f"Target folder not found: {target_path_str}")
+
+    moved = []
+    failed = []
+    conn = get_db_conn()
+    try:
+        cur = conn.cursor()
+        for mid in body.ids:
+            row = cur.execute(
+                "SELECT filePath, sourcePath, storageMode, removedAt FROM models WHERE id=?", (mid,)
+            ).fetchone()
+            if not row or row["removedAt"] is not None:
+                failed.append({"id": mid, "reason": "Model not found"})
+                continue
+
+            model_storage_mode = row["storageMode"] if row["storageMode"] else "copy"
+            current_path = row["sourcePath"] if model_storage_mode == "reference" else row["filePath"]
+            if not current_path or not os.path.exists(current_path):
+                failed.append({"id": mid, "reason": "File not found on disk"})
+                continue
+
+            destination = target_dir / Path(current_path).name
+            try:
+                validate_destination(str(destination), model_storage_mode)
+            except ValueError as exc:
+                failed.append({"id": mid, "reason": str(exc)})
+                continue
+
+            if destination.exists():
+                failed.append({"id": mid, "reason": f"A file already exists at {destination}"})
+                continue
+
+            persisted_path = os.path.normpath(str(destination))
+            shutil.move(current_path, persisted_path)
+
+            try:
+                if model_storage_mode == "reference":
+                    cur.execute(
+                        "UPDATE models SET filePath=?, sourcePath=? WHERE id=?",
+                        (persisted_path, persisted_path, mid),
+                    )
+                else:
+                    cur.execute("UPDATE models SET filePath=? WHERE id=?", (persisted_path, mid))
+                conn.commit()
+                moved.append({"id": mid, "filePath": persisted_path})
+            except Exception:
+                # Rollback: move the file back if the DB write fails, mirroring
+                # update_model_location's identical atomicity guarantee.
+                try:
+                    shutil.move(persisted_path, current_path)
+                except Exception:
+                    logger.exception(
+                        "Rollback move failed for model %s: file stranded at %s, "
+                        "database still points at %s",
+                        mid,
+                        persisted_path,
+                        current_path,
+                    )
+                failed.append({"id": mid, "reason": "Database update failed"})
+    finally:
+        conn.close()
+
+    return {"moved": moved, "failed": failed}
