@@ -12,6 +12,7 @@ import {
 export interface FolderTree {
   items: TreeViewDefaultItemModelProperties[];
   realPaths?: Map<string, string>;
+  nodesById: Map<string, TreeViewDefaultItemModelProperties>;
 }
 
 // Preserves a POSIX-absolute path's leading slash through the
@@ -66,20 +67,23 @@ export function useFolderTree(
       // happen through this app's own folder-creation endpoints, but nothing
       // stops a manually edited DB row from creating one, and an infinite
       // recursion here would hang the whole Sidebar/FolderPicker render.
+      const nodesById = new Map<string, TreeViewDefaultItemModelProperties>();
       const buildNode = (folder: Folder, visited: Set<string>): TreeViewDefaultItemModelProperties => {
         const nextVisited = new Set(visited).add(folder.id);
         const children = (childrenByParentId.get(folder.id) ?? [])
           .filter((child) => !nextVisited.has(child.id))
           .map((child) => buildNode(child, nextVisited))
           .sort((a, b) => a.label.localeCompare(b.label));
-        return { id: folder.id, label: folder.name, children };
+        const node = { id: folder.id, label: folder.name, children };
+        nodesById.set(node.id, node);
+        return node;
       };
 
       const treeitems = folders
         .filter((f) => f.parentId === null)
         .map((folder) => buildNode(folder, new Set()))
         .sort((a, b) => a.label.localeCompare(b.label));
-      return { items: treeitems };
+      return { items: treeitems, nodesById };
     }
 
     // File view: group every model by its filePath's directory instead of
@@ -144,11 +148,16 @@ export function useFolderTree(
       });
     });
 
-    const strip = (node: FileNode): TreeViewDefaultItemModelProperties => ({
-      id: node.id,
-      label: node.label,
-      children: node.children.map(strip),
-    });
-    return { items: root.children.map(strip), realPaths };
+    const nodesById = new Map<string, TreeViewDefaultItemModelProperties>();
+    const strip = (node: FileNode): TreeViewDefaultItemModelProperties => {
+      const stripped = {
+        id: node.id,
+        label: node.label,
+        children: node.children.map(strip),
+      };
+      nodesById.set(stripped.id, stripped);
+      return stripped;
+    };
+    return { items: root.children.map(strip), realPaths, nodesById };
   }, [viewMode, folders, models, trackedFolderPaths]);
 }
