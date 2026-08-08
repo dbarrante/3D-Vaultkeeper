@@ -15,6 +15,7 @@
     "@mui/x-tree-view": "^8.25.0",
     "@react-three/drei": "^10.7.7",
     "@react-three/fiber": "^9.4.0",
+    "@xmldom/xmldom": "^0.9.10",
     "jszip": "^3.10.1",
     "lucide-react": "^0.554.0",
     "occt-import-js": "^0.0.23",

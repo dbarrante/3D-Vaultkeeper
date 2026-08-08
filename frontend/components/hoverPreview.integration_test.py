@@ -303,33 +303,22 @@ def main():
             wait_for_thumbnails_idle(page)
 
             # --- Test 0: visual correctness across formats.
-            # STL and STEP should each produce a visible, non-blank
+            # STL, STEP, and 3MF should each produce a visible, non-blank
             # live-preview canvas within a few seconds.
             #
-            # 3MF is a KNOWN, CONFIRMED-BROKEN case, not yet fixed -- full
-            # writeup in the Task 3 report at .superpowers/sdd/
-            # 2026-08-06-hover-preview-worker-offload/task-3-report.md
-            # (that path is gitignored -- local to this repo checkout only,
-            # not guaranteed to exist for other clones -- so the root cause
-            # is repeated in full below rather than only linked).
-            # Root cause: three.js's ThreeMFLoader.parse() calls
-            # `new DOMParser().parseFromString(...)` unconditionally
-            # (node_modules/three/examples/jsm/loaders/3MFLoader.js:215,273),
-            # and DOMParser does not exist in a dedicated Worker's global
-            # scope in Chromium (confirmed empirically against Chromium
-            # 149 -- typeof DOMParser === 'undefined' inside a plain
-            # `new Worker(...)`). hoverPreviewWorker.ts's handleStart
-            # try/catch reports this as a real "error" (not a hang, not a
-            # crash), so the card correctly falls back to its static
-            # thumbnail -- 3MF hover preview fails closed, not open. The
-            # SAME root cause affects the pre-existing thumbnailWorker.ts's
-            # 3MF branch, which is outside this task's scope but shares the
-            # identical `new DOMParser()` call. Asserting a live 3MF canvas
-            # here would make this a permanently-red test until that
-            # worker-side XML-parsing fix lands (out of scope for Task 3 --
-            # see the report). TODO: once fixed, change this assertion back
-            # to `assert canvas_visible(page)` like the STL/STEP cases.
-            for fixture in (small, small_stp):
+            # 3MF was previously a KNOWN, CONFIRMED-BROKEN case: three.js's
+            # ThreeMFLoader.parse() calls `new DOMParser().parseFromString(...)`
+            # unconditionally (node_modules/three/examples/jsm/loaders/
+            # 3MFLoader.js:215,273), and DOMParser does not exist in a
+            # dedicated Worker's global scope in Chromium (confirmed
+            # empirically -- typeof DOMParser === 'undefined' inside a plain
+            # `new Worker(...)`). Fixed by frontend/workers/domParserShim.ts,
+            # which assigns a Worker-safe DOMParser implementation
+            # (xmldom-qsa) onto the Worker's global scope before
+            # ThreeMFLoader is ever invoked -- see that file's comment for
+            # the full root-cause writeup. The identical fix was applied to
+            # thumbnailWorker.ts's 3MF branch, which shared the same bug.
+            for fixture in (small, small_stp, small_3mf):
                 fmt_card = page.get_by_text(fixture["name"]).first
                 fmt_card.hover()
                 page.wait_for_timeout(3000)
@@ -382,17 +371,7 @@ def main():
                 page.mouse.move(5, 5)
                 page.wait_for_timeout(500)
 
-            mf_card = page.get_by_text(small_3mf["name"]).first
-            mf_card.hover()
-            page.wait_for_timeout(3000)
-            assert not canvas_visible(page), (
-                "small.3mf unexpectedly showed a live preview -- if the worker-side "
-                "DOMParser-in-Worker issue has been fixed, update this test to assert "
-                "canvas_visible(page) instead (see the comment above)"
-            )
-            page.mouse.move(5, 5)
-            page.wait_for_timeout(500)
-            print("visual correctness: STL/STEP live preview PASSED; 3MF confirmed-broken-and-falls-back (see report) PASSED")
+            print("visual correctness: STL/STEP/3MF live preview PASSED")
 
             # --- Test 1: under-threshold file gets a live preview, main
             # thread stays responsive ---
